@@ -113,3 +113,41 @@ func (e *Exporter) NextRawNode() (*Node, error) {
 }
 
 var ErrorExportDone = errors.New("export done")
+
+func (e *Exporter) Close() error {
+	return e.tree.Close()
+}
+
+func (tree *Tree) ExportVersion(version int64, order TraverseOrderType) (*Exporter, error) {
+	got, _ := tree.getRecentRoot(version)
+	if got {
+		return tree.Export(order), nil
+	}
+
+	oldTree, err := tree.ReadonlyClone()
+	if err != nil {
+		return nil, err
+	}
+	if err = oldTree.LoadVersion(version); err != nil {
+		return nil, err
+	}
+
+	exporter := &Exporter{
+		tree:  oldTree,
+		out:   make(chan *Node),
+		errCh: make(chan error),
+	}
+
+	go func(traverseOrder TraverseOrderType) {
+		defer close(exporter.out)
+		defer close(exporter.errCh)
+
+		if traverseOrder == PostOrder {
+			exporter.postOrderNext(oldTree.root)
+		} else if traverseOrder == PreOrder {
+			exporter.preOrderNext(oldTree.root)
+		}
+	}(order)
+
+	return exporter, nil
+}

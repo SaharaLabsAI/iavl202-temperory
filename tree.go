@@ -36,8 +36,6 @@ type Tree struct {
 	checkpoints      *VersionRange
 	shouldCheckpoint bool
 
-	versionLock sync.RWMutex
-
 	// options
 	maxWorkingSize     uint64
 	workingBytes       uint64
@@ -59,6 +57,8 @@ type Tree struct {
 	branchSequence uint32
 	isReplaying    bool
 	evictionDepth  int8
+
+	versionLock sync.RWMutex
 }
 
 type TreeOptions struct {
