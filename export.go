@@ -100,4 +100,16 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 	}
 }
 
+func (e *Exporter) NextRawNode() (*Node, error) {
+	select {
+	case node, ok := <-e.out:
+		if !ok {
+			return nil, ErrorExportDone
+		}
+		return node, nil
+	case err := <-e.errCh:
+		return nil, err
+	}
+}
+
 var ErrorExportDone = errors.New("export done")

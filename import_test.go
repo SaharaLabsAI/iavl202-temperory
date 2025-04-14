@@ -6,8 +6,9 @@ import (
 	"testing"
 
 	"github.com/cosmos/iavl-bench/bench"
-	"github.com/cosmos/iavl/v2/testutil"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cosmos/iavl/v2/testutil"
 )
 
 func Test_ExportImport(t *testing.T) {
@@ -21,26 +22,25 @@ func Test_ExportImport(t *testing.T) {
 	opts.UntilHash = "0d4dfc4b6f6194f72da11fa254cf2910e54d330e8a4d6238af40e6b8d35ea77f"
 	treeOpts := TreeOptions{CheckpointInterval: 10, HeightFilter: 1, StateStorage: true, EvictionDepth: 8}
 
-	multiTree := NewMultiTree(tmpDir, treeOpts)
+	multiTree := NewMultiTree(NewDebugLogger(), tmpDir, treeOpts)
 	itrs, ok := opts.Iterator.(*bench.ChangesetIterators)
 	require.True(t, ok)
 	storeKeys := itrs.StoreKeys()
 	for _, sk := range storeKeys {
 		require.NoError(t, multiTree.MountTree(sk))
 	}
-	testTreeBuild(t, multiTree, opts)
+	_, err = multiTree.TestBuild(opts)
+	require.NoError(t, err)
 
 	exported := make(map[string][]*Node)
 
 	// Export
 	for sk, tree := range multiTree.Trees {
-		exporter, err := tree.Export(tree.Version(), PostOrder)
-		require.NoError(t, err)
+		exporter := tree.Export(PostOrder)
 		require.NotNil(t, exporter)
 		for {
-			n, err := exporter.Next()
+			n, err := exporter.NextRawNode()
 			if errors.Is(err, ErrorExportDone) {
-				require.NoError(t, exporter.Close())
 				break
 			}
 			require.NoError(t, err)
@@ -55,7 +55,7 @@ func Test_ExportImport(t *testing.T) {
 	}
 
 	importDir := t.TempDir()
-	multiTree = NewMultiTree(importDir, treeOpts)
+	multiTree = NewMultiTree(NewDebugLogger(), importDir, treeOpts)
 	for _, sk := range storeKeys {
 		require.NoError(t, multiTree.MountTree(sk))
 	}

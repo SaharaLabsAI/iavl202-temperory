@@ -21,13 +21,13 @@ var ErrNoImport = errors.New("no import in progress")
 // Importer is not concurrency-safe, it is the caller's responsibility to ensure the tree is not
 // modified while performing an import.
 type Importer struct {
-	tree       *Tree
-	version    int64
-	batchSize  uint32
-	writeQueue *writeQueue
-	batch      *sqliteBatch
-	stack      []*Node
-	nonces     []uint32
+	tree      *Tree
+	version   int64
+	batchSize uint32
+	batch     *sqliteBatch
+
+	stack  []*Node
+	nonces []uint32
 
 	// inflightCommit tracks a batch commit, if any.
 	inflightCommit <-chan error
@@ -46,23 +46,15 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 	} else if versions.Len() > 0 {
 		return nil, fmt.Errorf("found versions %v, must be empty", versions)
 	}
-	if err := tree.sql.createShard(version, false); err != nil {
-		return nil, err
-	}
-	conn, err := tree.sql.newWriteConnection(version)
-	if err != nil {
-		return nil, err
-	}
 
 	return &Importer{
-		tree:       tree,
-		version:    version,
-		writeQueue: tree.writeQueue,
+		tree:    tree,
+		version: version,
 		batch: &sqliteBatch{
-			conn:              conn,
-			version:           version,
-			storeLatestLeaves: tree.storeLatestLeaves,
-			size:              importBatchSize / 4,
+			sql:    tree.sql,
+			tree:   tree,
+			size:   importBatchSize / 4,
+			logger: tree.sqlWriter.logger,
 		},
 		stack:  make([]*Node, 0, 8),
 		nonces: make([]uint32, version+1),
@@ -101,9 +93,9 @@ func (i *Importer) writeNode(node *Node) error {
 	copy(bytesCopy, buf.Bytes())
 
 	if node.isLeaf() {
-		i.writeQueue.leaves = append(i.writeQueue.leaves, node)
+		i.tree.leaves = append(i.tree.leaves, node)
 	} else {
-		i.writeQueue.branches = append(i.writeQueue.branches, node)
+		i.tree.branches = append(i.tree.branches, node)
 	}
 
 	i.batchSize++
@@ -114,13 +106,13 @@ func (i *Importer) writeNode(node *Node) error {
 		}
 		result := make(chan error)
 		i.inflightCommit = result
-		go func(q *writeQueue) {
-			i.batch.queue = q
+		go func() {
 			_, leafErr := i.batch.saveLeaves()
 			_, branchErr := i.batch.saveBranches()
 			result <- errors.Join(leafErr, branchErr)
-		}(i.writeQueue)
-		i.writeQueue = &writeQueue{}
+		}()
+		i.tree.leaves = nil
+		i.tree.branches = nil
 		i.batchSize = 0
 	}
 
@@ -226,7 +218,6 @@ func (i *Importer) Commit() error {
 	if err != nil {
 		return err
 	}
-	i.batch.queue = i.writeQueue
 	_, err = i.batch.saveBranches()
 	if err != nil {
 		return err
@@ -236,8 +227,8 @@ func (i *Importer) Commit() error {
 		return err
 	}
 
-	if err := i.batch.conn.Exec("INSERT INTO checkpoints VALUES (?, 0, 0, 0)", i.version); err != nil {
-		return err
+	if err := i.tree.sql.treeWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		return fmt.Errorf("failed tree checkpoint; %w", err)
 	}
 	err = i.tree.LoadVersion(i.version)
 	if err != nil {
