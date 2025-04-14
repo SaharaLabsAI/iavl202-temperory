@@ -842,3 +842,26 @@ func (tree *Tree) IterateRecent(version int64, start, end []byte, ascending bool
 func (tree *Tree) Import(version int64) (*Importer, error) {
 	return newImporter(tree, version)
 }
+
+func (tree *Tree) WorkingHash() []byte {
+	if tree.root == nil {
+		return emptyHash
+	}
+	if tree.root.hash != nil {
+		return tree.root.hash
+	}
+
+	heightFilter := tree.heightFilter
+	shouldCheckpoint := tree.shouldCheckpoint
+
+	tree.heightFilter = 0
+	tree.shouldCheckpoint = false
+	hash := tree.computeHash()
+
+	tree.leaves = nil
+	tree.branches = nil
+	tree.heightFilter = heightFilter
+	tree.shouldCheckpoint = shouldCheckpoint
+
+	return hash
+}
