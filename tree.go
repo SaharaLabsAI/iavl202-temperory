@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/cosmos/iavl/v2/metrics"
@@ -34,6 +35,8 @@ type Tree struct {
 
 	checkpoints      *VersionRange
 	shouldCheckpoint bool
+
+	versionLock sync.RWMutex
 
 	// options
 	maxWorkingSize     uint64
@@ -162,8 +165,10 @@ func (tree *Tree) SaveSnapshot() (err error) {
 }
 
 func (tree *Tree) SaveVersion() ([]byte, int64, error) {
+	tree.versionLock.Lock()
 	tree.version++
 	tree.resetSequences()
+	tree.versionLock.Unlock()
 
 	if err := tree.sql.closeHangingIterators(); err != nil {
 		return nil, 0, err
@@ -765,6 +770,7 @@ func (tree *Tree) ReadonlyClone() (*Tree, error) {
 		sqlWriter:          nil,
 		writerCancel:       nil,
 		pool:               tree.pool,
+		root:               tree.root,
 		checkpoints:        &VersionRange{},
 		metrics:            tree.metrics,
 		maxWorkingSize:     tree.maxWorkingSize,
@@ -777,4 +783,62 @@ func (tree *Tree) ReadonlyClone() (*Tree, error) {
 		evictionDepth:      tree.evictionDepth,
 		leafSequence:       tree.leafSequence,
 	}, nil
+}
+
+func (tree *Tree) SetInitialVersion(version int64) error {
+	var err error
+
+	tree.version = version - 1
+	tree.checkpoints, err = tree.sql.loadCheckpointRange()
+
+	return err
+}
+
+func (tree *Tree) GetRecent(version int64, key []byte) (bool, []byte, error) {
+	got, root := tree.getRecentRoot(version)
+	if !got {
+		return false, nil, nil
+	}
+	if root == nil {
+		return true, nil, nil
+	}
+
+	_, val, err := root.get(tree, key)
+	return true, val, err
+}
+
+func (tree *Tree) getRecentRoot(version int64) (bool, *Node) {
+	tree.versionLock.RLock()
+	defer tree.versionLock.RUnlock()
+
+	if version != tree.version {
+		return false, nil
+	}
+
+	root := *tree.root
+
+	return true, &root
+}
+
+func (tree *Tree) IterateRecent(version int64, start, end []byte, ascending bool) (bool, Iterator) {
+	got, root := tree.getRecentRoot(version)
+	if !got {
+		return false, nil
+	}
+	itr := &TreeIterator{
+		tree:      tree,
+		start:     start,
+		end:       end,
+		ascending: ascending,
+		inclusive: false,
+		stack:     []*Node{root},
+		valid:     true,
+		metrics:   tree.metricsProxy,
+	}
+	itr.Next()
+	return true, itr
+}
+
+func (tree *Tree) Import(version int64) (*Importer, error) {
+	return newImporter(tree, version)
 }

@@ -562,3 +562,12 @@ func (node *Node) evictChildren() {
 func (node *Node) Version() int64 {
 	return node.nodeKey.Version()
 }
+
+func NewImportNode(key, value []byte, version int64, height int8) *Node {
+	return &Node{
+		nodeKey:       NewNodeKey(version, 0),
+		key:           key,
+		value:         value,
+		subtreeHeight: height,
+	}
+}
