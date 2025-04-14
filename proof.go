@@ -9,8 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	encoding "github.com/cosmos/iavl/v2/internal"
 	ics23 "github.com/cosmos/ics23/go"
+
+	encoding "github.com/cosmos/iavl/v2/internal"
 )
 
 var proofBufPool = &sync.Pool{
@@ -188,14 +189,14 @@ func convertVarIntToBytes(orig int64, buf [binary.MaxVarintLen64]byte) []byte {
 // a path to the least item.
 func (tree *Tree) PathToLeaf(node *Node, key []byte) (PathToLeaf, *Node, error) {
 	path := new(PathToLeaf)
-	val, err := tree.pathToLeaf(node, key, path, tree.sql.readConnectionFactory())
+	val, err := tree.pathToLeaf(node, key, path)
 	return *path, val, err
 }
 
 // pathToLeaf is a helper which recursively constructs the PathToLeaf.
 // As an optimization the already constructed path is passed in as an argument
 // and is shared among recursive calls.
-func (tree *Tree) pathToLeaf(node *Node, key []byte, path *PathToLeaf, cf connectionFactory) (*Node, error) {
+func (tree *Tree) pathToLeaf(node *Node, key []byte, path *PathToLeaf) (*Node, error) {
 	if node.subtreeHeight == 0 {
 		if bytes.Equal(node.key, key) {
 			return node, nil
@@ -209,7 +210,7 @@ func (tree *Tree) pathToLeaf(node *Node, key []byte, path *PathToLeaf, cf connec
 	// already stored in the next ProofInnerNode in PathToLeaf.
 	if bytes.Compare(key, node.key) < 0 {
 		// left side
-		rightNode, err := node.getRightNode(tree.sql, cf)
+		rightNode, err := node.getRightNode(tree)
 		if err != nil {
 			return nil, err
 		}
@@ -223,15 +224,15 @@ func (tree *Tree) pathToLeaf(node *Node, key []byte, path *PathToLeaf, cf connec
 		}
 		*path = append(*path, pin)
 
-		leftNode, err := node.getLeftNode(tree.sql, cf)
+		leftNode, err := node.getLeftNode(tree)
 		if err != nil {
 			return nil, err
 		}
-		n, err := tree.pathToLeaf(leftNode, key, path, cf)
+		n, err := tree.pathToLeaf(leftNode, key, path)
 		return n, err
 	}
 	// right side
-	leftNode, err := node.getLeftNode(tree.sql, cf)
+	leftNode, err := node.getLeftNode(tree)
 	if err != nil {
 		return nil, err
 	}
@@ -245,12 +246,12 @@ func (tree *Tree) pathToLeaf(node *Node, key []byte, path *PathToLeaf, cf connec
 	}
 	*path = append(*path, pin)
 
-	rightNode, err := node.getRightNode(tree.sql, cf)
+	rightNode, err := node.getRightNode(tree)
 	if err != nil {
 		return nil, err
 	}
 
-	n, err := tree.pathToLeaf(rightNode, key, path, cf)
+	n, err := tree.pathToLeaf(rightNode, key, path)
 	return n, err
 }
 

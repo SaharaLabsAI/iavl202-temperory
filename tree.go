@@ -714,3 +714,67 @@ func (tree *Tree) WorkingBytes() uint64 {
 func (tree *Tree) SetShouldCheckpoint() {
 	tree.shouldCheckpoint = true
 }
+
+func (tree *Tree) GetWithIndex(key []byte) (int64, []byte, error) {
+	if tree.root == nil {
+		return 0, nil, nil
+	}
+	return tree.root.get(tree, key)
+}
+
+func (tree *Tree) GetByIndex(index int64) (key []byte, value []byte, err error) {
+	if tree.root == nil {
+		return nil, nil, nil
+	}
+	return tree.getByIndex(tree.root, index)
+}
+
+func (tree *Tree) getByIndex(node *Node, index int64) (key []byte, value []byte, err error) {
+	if node.isLeaf() {
+		if index == 0 {
+			return node.key, node.value, nil
+		}
+		return nil, nil, nil
+	}
+
+	leftNode, err := node.getLeftNode(tree)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if index < leftNode.size {
+		return tree.getByIndex(leftNode, index)
+	}
+
+	rightNode, err := node.getRightNode(tree)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return tree.getByIndex(rightNode, index-leftNode.size)
+}
+
+func (tree *Tree) ReadonlyClone() (*Tree, error) {
+	sql, err := NewSqliteDb(tree.pool, tree.sql.opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Tree{
+		sql:                sql,
+		sqlWriter:          nil,
+		writerCancel:       nil,
+		pool:               tree.pool,
+		checkpoints:        &VersionRange{},
+		metrics:            tree.metrics,
+		maxWorkingSize:     tree.maxWorkingSize,
+		checkpointInterval: tree.checkpointInterval,
+		checkpointMemory:   tree.checkpointMemory,
+		storeLeafValues:    tree.storeLeafValues,
+		storeLatestLeaves:  tree.storeLatestLeaves,
+		heightFilter:       tree.heightFilter,
+		metricsProxy:       tree.metricsProxy,
+		evictionDepth:      tree.evictionDepth,
+		leafSequence:       tree.leafSequence,
+	}, nil
+}

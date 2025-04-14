@@ -558,3 +558,7 @@ func (node *Node) evictChildren() {
 		node.rightNode = nil
 	}
 }
+
+func (node *Node) Version() int64 {
+	return node.nodeKey.Version()
+}
