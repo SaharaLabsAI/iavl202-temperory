@@ -7,7 +7,11 @@ import (
 
 type NodePool struct {
 	syncPool *sync.Pool
-	poolId   uint64
+
+	free  chan int
+	nodes []Node
+
+	poolId uint64
 }
 
 func NewNodePool() *NodePool {
@@ -17,26 +21,23 @@ func NewNodePool() *NodePool {
 				return &Node{}
 			},
 		},
+		free: make(chan int, 1000),
 	}
 	return np
 }
 
-func (np *NodePool) syncGet() *Node {
+func (np *NodePool) Get() *Node {
 	if np.poolId == math.MaxUint64 {
 		np.poolId = 1
 	} else {
 		np.poolId++
 	}
 	n := np.syncPool.Get().(*Node)
-	n.poolID = np.poolId
+	n.poolId = np.poolId
 	return n
 }
 
-func (np *NodePool) Get() *Node {
-	return &Node{}
-}
-
-func (np *NodePool) syncPut(node *Node) {
+func (np *NodePool) Put(node *Node) {
 	node.leftNodeKey = emptyNodeKey
 	node.rightNodeKey = emptyNodeKey
 	node.rightNode = nil
@@ -47,11 +48,9 @@ func (np *NodePool) syncPut(node *Node) {
 	node.value = nil
 	node.subtreeHeight = 0
 	node.size = 0
-	node.evict = 0
+	node.dirty = false
+	node.evict = false
 
-	node.poolID = 0
+	node.poolId = 0
 	np.syncPool.Put(node)
-}
-
-func (np *NodePool) Put(_ *Node) {
 }
