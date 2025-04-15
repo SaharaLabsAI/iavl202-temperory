@@ -107,6 +107,12 @@ func (i *Importer) writeNode(node *Node) error {
 		result := make(chan error)
 		i.inflightCommit = result
 		go func() {
+			// batch.saveLeaves will check root.nodeKey to decide whether we need to return
+			// node back to pool when heightFilter is enabled.
+			if i.tree.root == nil {
+				i.tree.root = i.tree.leaves[0]
+			}
+
 			_, leafErr := i.batch.saveLeaves()
 			_, branchErr := i.batch.saveBranches()
 			result <- errors.Join(leafErr, branchErr)
@@ -210,6 +216,7 @@ func (i *Importer) Commit() error {
 		if err := i.tree.sql.SaveRoot(i.version, n, true); err != nil {
 			return err
 		}
+		i.tree.root = n
 	default:
 		return fmt.Errorf("invalid node structure, found stack size %v when committing",
 			len(i.stack))
