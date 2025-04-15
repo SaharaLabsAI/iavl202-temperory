@@ -29,9 +29,10 @@ func (tree *Tree) Export(order TraverseOrderType) *Exporter {
 		defer close(exporter.out)
 		defer close(exporter.errCh)
 
-		if traverseOrder == PostOrder {
+		switch traverseOrder {
+		case PostOrder:
 			exporter.postOrderNext(tree.root)
-		} else if traverseOrder == PreOrder {
+		case PreOrder:
 			exporter.preOrderNext(tree.root)
 		}
 	}(order)
@@ -63,8 +64,8 @@ func (e *Exporter) postOrderNext(node *Node) {
 }
 
 func (e *Exporter) preOrderNext(node *Node) {
-	e.out <- node
 	if node.isLeaf() {
+		e.out <- node
 		return
 	}
 
@@ -95,7 +96,10 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 			Version: node.nodeKey.Version(),
 			Height:  node.subtreeHeight,
 		}, nil
-	case err := <-e.errCh:
+	case err, ok := <-e.errCh:
+		if !ok {
+			return nil, ErrorExportDone
+		}
 		return nil, err
 	}
 }
@@ -107,7 +111,10 @@ func (e *Exporter) NextRawNode() (*Node, error) {
 			return nil, ErrorExportDone
 		}
 		return node, nil
-	case err := <-e.errCh:
+	case err, ok := <-e.errCh:
+		if !ok {
+			return nil, ErrorExportDone
+		}
 		return nil, err
 	}
 }
@@ -142,10 +149,11 @@ func (tree *Tree) ExportVersion(version int64, order TraverseOrderType) (*Export
 		defer close(exporter.out)
 		defer close(exporter.errCh)
 
-		if traverseOrder == PostOrder {
-			exporter.postOrderNext(oldTree.root)
-		} else if traverseOrder == PreOrder {
-			exporter.preOrderNext(oldTree.root)
+		switch traverseOrder {
+		case PostOrder:
+			exporter.postOrderNext(tree.root)
+		case PreOrder:
+			exporter.preOrderNext(tree.root)
 		}
 	}(order)
 

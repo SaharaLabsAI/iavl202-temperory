@@ -31,6 +31,7 @@ func Test_ExportImport(t *testing.T) {
 	}
 	_, err = multiTree.TestBuild(opts)
 	require.NoError(t, err)
+	require.Equal(t, opts.UntilHash, fmt.Sprintf("%x", multiTree.Hash()))
 
 	exported := make(map[string][]*Node)
 
