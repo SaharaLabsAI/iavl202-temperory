@@ -116,7 +116,15 @@ func (tree *Tree) LoadVersion(version int64) (err error) {
 	if err != nil {
 		return err
 	}
-	tree.version = tree.checkpoints.FindPrevious(version)
+
+	previousVersion := tree.checkpoints.FindPrevious(version)
+	if previousVersion > 0 {
+		tree.version = previousVersion
+	}
+
+	if tree.version == 0 {
+		return nil
+	}
 
 	tree.root, err = tree.sql.LoadRoot(tree.version)
 	if err != nil {
@@ -812,6 +820,11 @@ func (tree *Tree) getRecentRoot(version int64) (bool, *Node) {
 	defer tree.versionLock.RUnlock()
 
 	if version != tree.version {
+		return false, nil
+	}
+
+	// Version == 0
+	if tree.root == nil {
 		return false, nil
 	}
 
