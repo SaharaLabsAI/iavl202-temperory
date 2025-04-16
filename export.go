@@ -131,16 +131,13 @@ func (tree *Tree) ExportVersion(version int64, order TraverseOrderType) (*Export
 		return tree.Export(order), nil
 	}
 
-	oldTree, err := tree.ReadonlyClone()
+	imTree, err := tree.GetImmutable(version)
 	if err != nil {
-		return nil, err
-	}
-	if err = oldTree.LoadVersion(version); err != nil {
 		return nil, err
 	}
 
 	exporter := &Exporter{
-		tree:  oldTree,
+		tree:  imTree,
 		out:   make(chan *Node),
 		errCh: make(chan error),
 	}

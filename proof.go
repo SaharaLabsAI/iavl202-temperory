@@ -21,19 +21,18 @@ var proofBufPool = &sync.Pool{
 }
 
 func (tree *Tree) GetProof(version int64, key []byte) (proof *ics23.CommitmentProof, err error) {
-	t, err := tree.ReadonlyClone()
+	t, err := tree.GetImmutable(version)
 	if err != nil {
 		return nil, err
 	}
+
 	defer func() {
 		dErr := t.sql.Close()
 		if dErr != nil {
 			err = errors.Join(err, dErr)
 		}
 	}()
-	if err := t.LoadVersion(version); err != nil {
-		return nil, err
-	}
+
 	return t.getProof(key)
 }
 

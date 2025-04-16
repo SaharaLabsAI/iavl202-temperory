@@ -767,32 +767,6 @@ func (tree *Tree) getByIndex(node *Node, index int64) (key []byte, value []byte,
 	return tree.getByIndex(rightNode, index-leftNode.size)
 }
 
-func (tree *Tree) ReadonlyClone() (*Tree, error) {
-	sql, err := NewSqliteDb(tree.pool, tree.sql.opts)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Tree{
-		sql:                sql,
-		sqlWriter:          nil,
-		writerCancel:       nil,
-		pool:               tree.pool,
-		root:               tree.root,
-		checkpoints:        &VersionRange{},
-		metrics:            tree.metrics,
-		maxWorkingSize:     tree.maxWorkingSize,
-		checkpointInterval: tree.checkpointInterval,
-		checkpointMemory:   tree.checkpointMemory,
-		storeLeafValues:    tree.storeLeafValues,
-		storeLatestLeaves:  tree.storeLatestLeaves,
-		heightFilter:       tree.heightFilter,
-		metricsProxy:       tree.metricsProxy,
-		evictionDepth:      tree.evictionDepth,
-		leafSequence:       tree.leafSequence,
-	}, nil
-}
-
 func (tree *Tree) SetInitialVersion(version int64) error {
 	var err error
 
@@ -877,4 +851,36 @@ func (tree *Tree) WorkingHash() []byte {
 	tree.shouldCheckpoint = shouldCheckpoint
 
 	return hash
+}
+
+func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
+	pool := NewNodePool()
+	sql, err := NewSqliteDb(pool, tree.sql.opts)
+	if err != nil {
+		return nil, err
+	}
+
+	imTree := &Tree{
+		sql:                sql,
+		sqlWriter:          nil,
+		writerCancel:       nil,
+		pool:               pool,
+		checkpoints:        &VersionRange{},
+		metrics:            tree.metrics,
+		maxWorkingSize:     tree.maxWorkingSize,
+		checkpointInterval: tree.checkpointInterval,
+		checkpointMemory:   tree.checkpointMemory,
+		storeLeafValues:    tree.storeLeafValues,
+		storeLatestLeaves:  tree.storeLatestLeaves,
+		heightFilter:       tree.heightFilter,
+		metricsProxy:       tree.metricsProxy,
+		evictionDepth:      tree.evictionDepth,
+		leafSequence:       leafSequenceStart,
+	}
+
+	if err := imTree.LoadVersion(version); err != nil {
+		return nil, err
+	}
+
+	return imTree, nil
 }
