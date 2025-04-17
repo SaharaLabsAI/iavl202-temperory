@@ -59,6 +59,7 @@ type Tree struct {
 	evictionDepth  int8
 
 	versionLock sync.RWMutex
+	immutable   bool
 }
 
 type TreeOptions struct {
@@ -98,6 +99,7 @@ func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 		metricsProxy:       opts.MetricsProxy,
 		evictionDepth:      opts.EvictionDepth,
 		leafSequence:       leafSequenceStart,
+		immutable:          false,
 	}
 
 	tree.sqlWriter.start(ctx)
@@ -346,6 +348,10 @@ func (tree *Tree) Has(key []byte) (bool, error) {
 // to slices stored within IAVL. It returns true when an existing value was
 // updated, while false means it was a new key.
 func (tree *Tree) Set(key, value []byte) (updated bool, err error) {
+	if tree.immutable {
+		panic("set on immutable tree")
+	}
+
 	if tree.metricsProxy != nil {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_set")
 	}
@@ -468,6 +474,10 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 // Remove removes a key from the working tree. The given key byte slice should not be modified
 // after this call, since it may point to data stored inside IAVL.
 func (tree *Tree) Remove(key []byte) ([]byte, bool, error) {
+	if tree.immutable {
+		panic("Remove on immutable tree")
+	}
+
 	if tree.metricsProxy != nil {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_remove")
 	}
@@ -768,6 +778,10 @@ func (tree *Tree) getByIndex(node *Node, index int64) (key []byte, value []byte,
 }
 
 func (tree *Tree) SetInitialVersion(version int64) error {
+	if tree.immutable {
+		panic("set initial version on immutable tree")
+	}
+
 	var err error
 
 	tree.version = version - 1
@@ -882,5 +896,17 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 		return nil, err
 	}
 
+	imTree.immutable = true
+
 	return imTree, nil
+}
+
+func (tree *Tree) VersionExists(version int64) (bool, error) {
+	checkpoints, err := tree.sql.loadCheckpointRange()
+	if err != nil {
+		return false, err
+	}
+
+	previousVersion := checkpoints.FindPrevious(version)
+	return previousVersion > 0, nil
 }
