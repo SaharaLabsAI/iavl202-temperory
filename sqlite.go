@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/bvinc/go-sqlite-lite/sqlite3"
-	"github.com/cosmos/iavl/v2/metrics"
 	"github.com/dustin/go-humanize"
 	api "github.com/kocubinski/costor-api"
+
+	"github.com/cosmos/iavl/v2/metrics"
 )
 
 const defaultSQLitePath = "/tmp/iavl-v2"
@@ -1123,4 +1124,8 @@ func (sql *SqliteDb) WriteLatestLeaves(tree *Tree) (err error) {
 
 func (sql *SqliteDb) Logger() Logger {
 	return sql.logger
+}
+
+func DefaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
+	return defaultSqliteDbOptions(opts)
 }
