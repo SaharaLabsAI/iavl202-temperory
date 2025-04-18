@@ -176,9 +176,10 @@ func (tree *Tree) SaveSnapshot() (err error) {
 
 func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.versionLock.Lock()
+	defer tree.versionLock.Unlock()
+
 	tree.version++
 	tree.resetSequences()
-	tree.versionLock.Unlock()
 
 	if err := tree.sql.closeHangingIterators(); err != nil {
 		return nil, 0, err
@@ -210,6 +211,7 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 			}
 		}
 	}
+
 	tree.leafOrphans = nil
 	tree.leaves = nil
 	tree.branches = nil
@@ -848,21 +850,25 @@ func (tree *Tree) WorkingHash() []byte {
 	if tree.root == nil {
 		return emptyHash
 	}
+
 	if tree.root.hash != nil {
 		return tree.root.hash
 	}
 
-	heightFilter := tree.heightFilter
-	shouldCheckpoint := tree.shouldCheckpoint
+	tree.versionLock.Lock()
+	defer tree.versionLock.Unlock()
 
-	tree.heightFilter = 0
-	tree.shouldCheckpoint = false
+	tree.version++
+	tree.resetSequences()
+
+	if err := tree.sql.closeHangingIterators(); err != nil {
+		panic(err)
+	}
+
 	hash := tree.computeHash()
 
-	tree.leaves = nil
-	tree.branches = nil
-	tree.heightFilter = heightFilter
-	tree.shouldCheckpoint = shouldCheckpoint
+	tree.version--
+	tree.resetSequences()
 
 	return hash
 }
