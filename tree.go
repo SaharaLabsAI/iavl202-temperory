@@ -59,6 +59,7 @@ type Tree struct {
 	evictionDepth  int8
 
 	versionLock sync.RWMutex
+	mutateLock  sync.RWMutex
 	immutable   bool
 }
 
@@ -177,6 +178,8 @@ func (tree *Tree) SaveSnapshot() (err error) {
 func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.versionLock.Lock()
 	defer tree.versionLock.Unlock()
+	tree.mutateLock.Lock()
+	defer tree.mutateLock.Unlock()
 
 	tree.version++
 	tree.resetSequences()
@@ -308,6 +311,10 @@ func (tree *Tree) Get(key []byte) ([]byte, error) {
 	if tree.metricsProxy != nil {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_get")
 	}
+
+	tree.mutateLock.RLock()
+	defer tree.mutateLock.RUnlock()
+
 	var (
 		res []byte
 		err error
@@ -353,6 +360,8 @@ func (tree *Tree) Set(key, value []byte) (updated bool, err error) {
 	if tree.immutable {
 		panic("set on immutable tree")
 	}
+	tree.mutateLock.Lock()
+	defer tree.mutateLock.Unlock()
 
 	if tree.metricsProxy != nil {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_set")
@@ -479,6 +488,8 @@ func (tree *Tree) Remove(key []byte) ([]byte, bool, error) {
 	if tree.immutable {
 		panic("Remove on immutable tree")
 	}
+	tree.mutateLock.Lock()
+	defer tree.mutateLock.Unlock()
 
 	if tree.metricsProxy != nil {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_remove")
