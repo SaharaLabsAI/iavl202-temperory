@@ -142,6 +142,12 @@ func (tree *Tree) ExportVersion(version int64, order TraverseOrderType) (*Export
 		errCh: make(chan error),
 	}
 
+	if imTree.root == nil {
+		close(exporter.out)
+		close(exporter.errCh)
+		return exporter, nil
+	}
+
 	go func(traverseOrder TraverseOrderType) {
 		defer close(exporter.out)
 		defer close(exporter.errCh)
