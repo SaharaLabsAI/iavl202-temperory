@@ -206,7 +206,11 @@ func (i *Importer) Commit() error {
 
 	switch len(i.stack) {
 	case 0:
-		return errors.New("invalid node structure, found empty stack when committing")
+		// Should handle tree.root == nil special case
+		if err := i.tree.sql.SaveRoot(i.version, nil, true); err != nil {
+			return err
+		}
+		i.tree.root = nil
 	case 1:
 		n := i.stack[0]
 		n.nodeKey = NewNodeKey(n.Version(), 1)
