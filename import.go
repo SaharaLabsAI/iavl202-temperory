@@ -57,7 +57,7 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 		batch: &sqliteBatch{
 			sql:    tree.sql,
 			tree:   tree,
-			size:   importBatchSize / 4,
+			size:   importBatchSize,
 			logger: tree.sqlWriter.logger,
 		},
 		stack:         make([]*Node, 0, 8),
