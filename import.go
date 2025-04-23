@@ -230,7 +230,6 @@ func (i *Importer) Commit() error {
 		if err := i.writeNode(n); err != nil {
 			return err
 		}
-		fmt.Printf("fejjfejifejif root hash %x\n", n.hash)
 		if err := i.tree.sql.SaveRoot(i.version, n, true); err != nil {
 			return err
 		}
