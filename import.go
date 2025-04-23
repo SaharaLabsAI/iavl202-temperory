@@ -26,8 +26,7 @@ type Importer struct {
 	batchSize uint32
 	batch     *sqliteBatch
 
-	stack  []*Node
-	nonces []uint32
+	stack []*Node
 
 	// inflightCommit tracks a batch commit, if any.
 	inflightCommit <-chan error
@@ -49,6 +48,7 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 
 	// NOTE: Must turn off heightFilter, otherwise imported tree root may not be consistent
 	tree.heightFilter = 0
+	tree.version = version
 
 	return &Importer{
 		tree:    tree,
@@ -59,8 +59,7 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 			size:   importBatchSize / 4,
 			logger: tree.sqlWriter.logger,
 		},
-		stack:  make([]*Node, 0, 8),
-		nonces: make([]uint32, version+1),
+		stack: make([]*Node, 0, 8),
 	}, nil
 }
 
@@ -107,6 +106,7 @@ func (i *Importer) writeNode(node *Node) error {
 		if err != nil {
 			return err
 		}
+
 		result := make(chan error)
 		i.inflightCommit = result
 		go func() {
@@ -114,6 +114,12 @@ func (i *Importer) writeNode(node *Node) error {
 			_, branchErr := i.batch.saveBranches()
 			result <- errors.Join(leafErr, branchErr)
 		}()
+
+		err = i.waitBatch()
+		if err != nil {
+			return err
+		}
+
 		i.tree.leaves = nil
 		i.tree.branches = nil
 		i.batchSize = 0
@@ -184,9 +190,12 @@ func (i *Importer) Add(node *Node) error {
 		rightNode.leftNode = nil
 		rightNode.rightNode = nil
 	}
-	i.nonces[nodeVersion]++
 
-	node.nodeKey = NewNodeKey(nodeVersion, i.nonces[nodeVersion]+1)
+	if node.isLeaf() {
+		node.nodeKey = i.nextLeafNodeKey()
+	} else {
+		node.nodeKey = i.nextNodeKey()
+	}
 
 	i.stack = append(i.stack, node)
 
@@ -197,6 +206,8 @@ func (i *Importer) Add(node *Node) error {
 // version visible, and updating the tree metadata. It can only be called once, and calls Close()
 // internally.
 func (i *Importer) Commit() error {
+	i.tree.version = i.version - 1
+
 	if i.tree == nil {
 		return ErrNoImport
 	}
@@ -210,7 +221,11 @@ func (i *Importer) Commit() error {
 		i.tree.root = nil
 	case 1:
 		n := i.stack[0]
-		n.nodeKey = NewNodeKey(n.Version(), 1)
+		if n.subtreeHeight == 0 {
+			n.nodeKey = i.nextLeafNodeKey()
+		} else {
+			n.nodeKey = i.nextNodeKey()
+		}
 		if err := i.writeNode(n); err != nil {
 			return err
 		}
@@ -245,4 +260,19 @@ func (i *Importer) Commit() error {
 
 	i.Close()
 	return nil
+}
+
+func (i *Importer) nextLeafNodeKey() NodeKey {
+	i.tree.leafSequence++
+	if i.tree.leafSequence < leafSequenceStart {
+		panic("leaf sequence underflow")
+	}
+	nk := NewNodeKey(i.version, i.tree.leafSequence)
+	return nk
+}
+
+func (i *Importer) nextNodeKey() NodeKey {
+	i.tree.branchSequence++
+	nk := NewNodeKey(i.version, i.tree.branchSequence)
+	return nk
 }
