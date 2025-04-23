@@ -47,6 +47,9 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 		return nil, fmt.Errorf("found versions %v, must be empty", versions)
 	}
 
+	// NOTE: Must turn off heightFilter, otherwise imported tree root may not be consistent
+	tree.heightFilter = 0
+
 	return &Importer{
 		tree:    tree,
 		version: version,
@@ -107,12 +110,6 @@ func (i *Importer) writeNode(node *Node) error {
 		result := make(chan error)
 		i.inflightCommit = result
 		go func() {
-			// batch.saveLeaves will check root.nodeKey to decide whether we need to return
-			// node back to pool when heightFilter is enabled.
-			if i.tree.root == nil {
-				i.tree.root = i.tree.leaves[0]
-			}
-
 			_, leafErr := i.batch.saveLeaves()
 			_, branchErr := i.batch.saveBranches()
 			result <- errors.Join(leafErr, branchErr)

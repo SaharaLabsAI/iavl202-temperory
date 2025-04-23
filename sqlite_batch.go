@@ -5,8 +5,9 @@ import (
 	"time"
 
 	"github.com/bvinc/go-sqlite-lite/sqlite3"
-	"github.com/cosmos/iavl/v2/metrics"
 	"github.com/dustin/go-humanize"
+
+	"github.com/cosmos/iavl/v2/metrics"
 )
 
 type sqliteBatch struct {
