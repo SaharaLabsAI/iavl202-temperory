@@ -161,10 +161,6 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 		tree = b.tree
 	)
 	for i, leaf := range tree.leaves {
-		if leaf.hash == nil {
-			leaf._hash()
-		}
-
 		b.leafCount++
 		if tree.storeLatestLeaves {
 			val = leaf.value
