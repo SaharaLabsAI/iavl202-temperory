@@ -717,7 +717,7 @@ func (sql *SqliteDb) getRightNode(node *Node) (*Node, error) {
 		return nil, errors.New("leaf node has no children")
 	}
 	var err error
-	if isLeafSeq(node.rightNodeKey.Sequence()) {
+	if isLeafSeq(node.rightNodeKey.Sequence()) || node.subtreeHeight == 1 {
 		node.rightNode, err = sql.getLeaf(node.rightNodeKey)
 	} else {
 		node.rightNode, err = sql.getNode(node.rightNodeKey)
@@ -737,7 +737,7 @@ func (sql *SqliteDb) getLeftNode(node *Node) (*Node, error) {
 		return nil, errors.New("leaf node has no children")
 	}
 	var err error
-	if isLeafSeq(node.leftNodeKey.Sequence()) {
+	if isLeafSeq(node.leftNodeKey.Sequence()) || node.subtreeHeight == 1 {
 		node.leftNode, err = sql.getLeaf(node.leftNodeKey)
 	} else {
 		node.leftNode, err = sql.getNode(node.leftNodeKey)
