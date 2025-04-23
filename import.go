@@ -26,7 +26,9 @@ type Importer struct {
 	batchSize uint32
 	batch     *sqliteBatch
 
-	stack []*Node
+	stack         []*Node
+	leafSequences []uint32
+	nodeSequences []uint32
 
 	// inflightCommit tracks a batch commit, if any.
 	inflightCommit <-chan error
@@ -48,7 +50,6 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 
 	// NOTE: Must turn off heightFilter, otherwise imported tree root may not be consistent
 	tree.heightFilter = 0
-	tree.version = version
 
 	return &Importer{
 		tree:    tree,
@@ -59,7 +60,9 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 			size:   importBatchSize / 4,
 			logger: tree.sqlWriter.logger,
 		},
-		stack: make([]*Node, 0, 8),
+		stack:         make([]*Node, 0, 8),
+		leafSequences: make([]uint32, version+1),
+		nodeSequences: make([]uint32, version+1),
 	}, nil
 }
 
@@ -192,9 +195,9 @@ func (i *Importer) Add(node *Node) error {
 	}
 
 	if node.isLeaf() {
-		node.nodeKey = i.nextLeafNodeKey()
+		node.nodeKey = NewNodeKey(nodeVersion, i.nextLeafSequence(nodeVersion))
 	} else {
-		node.nodeKey = i.nextNodeKey()
+		node.nodeKey = NewNodeKey(nodeVersion, i.nextNodeSequence(nodeVersion))
 	}
 
 	i.stack = append(i.stack, node)
@@ -206,8 +209,6 @@ func (i *Importer) Add(node *Node) error {
 // version visible, and updating the tree metadata. It can only be called once, and calls Close()
 // internally.
 func (i *Importer) Commit() error {
-	i.tree.version = i.version - 1
-
 	if i.tree == nil {
 		return ErrNoImport
 	}
@@ -222,13 +223,14 @@ func (i *Importer) Commit() error {
 	case 1:
 		n := i.stack[0]
 		if n.subtreeHeight == 0 {
-			n.nodeKey = i.nextLeafNodeKey()
+			n.nodeKey = NewNodeKey(n.Version(), i.nextLeafSequence(n.Version()))
 		} else {
-			n.nodeKey = i.nextNodeKey()
+			n.nodeKey = NewNodeKey(n.Version(), i.nextNodeSequence(n.Version()))
 		}
 		if err := i.writeNode(n); err != nil {
 			return err
 		}
+		fmt.Printf("fejjfejifejif root hash %x\n", n.hash)
 		if err := i.tree.sql.SaveRoot(i.version, n, true); err != nil {
 			return err
 		}
@@ -262,17 +264,20 @@ func (i *Importer) Commit() error {
 	return nil
 }
 
-func (i *Importer) nextLeafNodeKey() NodeKey {
-	i.tree.leafSequence++
-	if i.tree.leafSequence < leafSequenceStart {
+func (i *Importer) nextLeafSequence(version int64) uint32 {
+	if i.leafSequences[version] == 0 {
+		i.leafSequences[version] = leafSequenceStart
+	}
+
+	i.leafSequences[version]++
+	if i.leafSequences[version] < leafSequenceStart {
 		panic("leaf sequence underflow")
 	}
-	nk := NewNodeKey(i.version, i.tree.leafSequence)
-	return nk
+
+	return i.leafSequences[version]
 }
 
-func (i *Importer) nextNodeKey() NodeKey {
-	i.tree.branchSequence++
-	nk := NewNodeKey(i.version, i.tree.branchSequence)
-	return nk
+func (i *Importer) nextNodeSequence(version int64) uint32 {
+	i.nodeSequences[version]++
+	return i.nodeSequences[version]
 }
