@@ -62,7 +62,6 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 		opts.Path = defaultSQLitePath
 	}
 	if opts.Mode == 0 {
-		fmt.Printf("set mode to OPEN_NOMUTEX\n")
 		opts.Mode = sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE | sqlite3.OPEN_NOMUTEX
 	}
 	if opts.MmapSize == 0 {
