@@ -28,7 +28,7 @@ func probeCommand() *cobra.Command {
 			}
 			fn := f.Name()
 			fmt.Println("fn:", fn)
-			conn, err := sqlite3.Open(fn)
+			conn, err := sqlite3.Open(fn, sqlite3.OPEN_READONLY)
 			if err != nil {
 				return err
 			}

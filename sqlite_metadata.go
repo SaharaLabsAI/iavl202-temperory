@@ -29,7 +29,8 @@ func NewSqliteKVStore(opts SqliteDbOptions) (kv *SqliteKVStore, err error) {
 	pageSize := os.Getpagesize()
 	kv = &SqliteKVStore{options: opts, lock: &sync.Mutex{}}
 	kv.write, err = sqlite3.Open(fmt.Sprintf(
-		"file:%s?_journal_mode=WAL&_synchronous=OFF&&_wal_autocheckpoint=%d", opts.Path, pageSize/opts.WalSize))
+		"file:%s?_journal_mode=WAL&_synchronous=OFF&&_wal_autocheckpoint=%d", opts.Path, pageSize/opts.WalSize),
+		sqlite3.OPEN_READWRITE|sqlite3.OPEN_CREATE|sqlite3.OPEN_NOMUTEX)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +40,7 @@ func NewSqliteKVStore(opts SqliteDbOptions) (kv *SqliteKVStore, err error) {
 		return nil, err
 	}
 
-	kv.read, err = sqlite3.Open(fmt.Sprintf("file:%s?mode=ro", opts.Path))
+	kv.read, err = sqlite3.Open(fmt.Sprintf("file:%s?mode=ro", opts.Path), sqlite3.OPEN_READONLY)
 	if err != nil {
 		return nil, err
 	}

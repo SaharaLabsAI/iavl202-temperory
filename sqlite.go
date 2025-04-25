@@ -61,6 +61,10 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	if opts.Path == "" {
 		opts.Path = defaultSQLitePath
 	}
+	if opts.Mode == 0 {
+		fmt.Printf("set mode to OPEN_NOMUTEX\n")
+		opts.Mode = sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE | sqlite3.OPEN_NOMUTEX
+	}
 	if opts.MmapSize == 0 {
 		opts.MmapSize = 8 * 1024 * 1024 * 1024
 	}
@@ -97,7 +101,7 @@ func (opts SqliteDbOptions) treeConnectionString() string {
 func (opts SqliteDbOptions) EstimateMmapSize() (uint64, error) {
 	opts.Logger.Info("calculate mmap size")
 	opts.Logger.Info(fmt.Sprintf("leaf connection string: %s", opts.leafConnectionString()))
-	conn, err := sqlite3.Open(opts.leafConnectionString())
+	conn, err := sqlite3.Open(opts.leafConnectionString(), opts.Mode)
 	if err != nil {
 		return 0, err
 	}
@@ -243,7 +247,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 			return err
 		}
 	}
-	sql.treeWrite, err = sqlite3.Open(sql.opts.treeConnectionString())
+	sql.treeWrite, err = sqlite3.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return err
 	}
@@ -257,7 +261,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	sql.leafWrite, err = sqlite3.Open(sql.opts.leafConnectionString())
+	sql.leafWrite, err = sqlite3.Open(sql.opts.leafConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return err
 	}
@@ -275,7 +279,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 }
 
 func (sql *SqliteDb) newReadConn() (*sqlite3.Conn, error) {
-	conn, err := sqlite3.Open(sql.opts.treeConnectionString())
+	conn, err := sqlite3.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +456,7 @@ func (sql *SqliteDb) SaveRoot(version int64, node *Node, isCheckpoint bool) erro
 }
 
 func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
-	conn, err := sqlite3.Open(sql.opts.treeConnectionString())
+	conn, err := sqlite3.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -503,7 +507,7 @@ func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
 // lastCheckpoint fetches the last checkpoint version from the shard table previous to the loaded root's version.
 // a return value of zero and nil error indicates no checkpoint was found.
 func (sql *SqliteDb) lastCheckpoint(treeVersion int64) (checkpointVersion int64, err error) {
-	conn, err := sqlite3.Open(sql.opts.treeConnectionString())
+	conn, err := sqlite3.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return 0, err
 	}
@@ -533,7 +537,7 @@ func (sql *SqliteDb) lastCheckpoint(treeVersion int64) (checkpointVersion int64,
 }
 
 func (sql *SqliteDb) loadCheckpointRange() (*VersionRange, error) {
-	conn, err := sqlite3.Open(sql.opts.treeConnectionString())
+	conn, err := sqlite3.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return nil, err
 	}

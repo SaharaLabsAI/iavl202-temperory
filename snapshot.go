@@ -82,7 +82,7 @@ type SnapshotOptions struct {
 func NewIngestSnapshotConnection(snapshotDbPath string) (*sqlite3.Conn, error) {
 	newDb := !api.IsFileExistent(snapshotDbPath)
 
-	conn, err := sqlite3.Open(fmt.Sprintf("file:%s", snapshotDbPath))
+	conn, err := sqlite3.Open(fmt.Sprintf("file:%s", snapshotDbPath), sqlite3.OPEN_READWRITE|sqlite3.OPEN_CREATE|sqlite3.OPEN_NOMUTEX)
 	if err != nil {
 		return nil, err
 	}
