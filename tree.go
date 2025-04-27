@@ -94,7 +94,7 @@ func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 		checkpointInterval: opts.CheckpointInterval,
 		checkpointMemory:   opts.CheckpointMemory,
 		storeLeafValues:    opts.StateStorage,
-		storeLatestLeaves:  false,
+		storeLatestLeaves:  true,
 		heightFilter:       opts.HeightFilter,
 		metricsProxy:       opts.MetricsProxy,
 		evictionDepth:      opts.EvictionDepth,
