@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/bvinc/go-sqlite-lite/sqlite3"
-	"github.com/cosmos/iavl/v2"
+	"github.com/eatonphil/gosqlite"
 	"github.com/spf13/cobra"
+
+	"github.com/cosmos/iavl/v2"
 )
 
 func Command() *cobra.Command {
@@ -28,7 +29,7 @@ func probeCommand() *cobra.Command {
 			}
 			fn := f.Name()
 			fmt.Println("fn:", fn)
-			conn, err := sqlite3.Open(fn, sqlite3.OPEN_READONLY)
+			conn, err := gosqlite.Open(fn, gosqlite.OPEN_READONLY)
 			if err != nil {
 				return err
 			}

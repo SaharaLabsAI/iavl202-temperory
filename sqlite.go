@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/bvinc/go-sqlite-lite/sqlite3"
 	"github.com/dustin/go-humanize"
+	"github.com/eatonphil/gosqlite"
 	api "github.com/kocubinski/costor-api"
 
 	"github.com/cosmos/iavl/v2/metrics"
@@ -39,19 +39,19 @@ type SqliteDb struct {
 
 	// 2 separate databases and 2 separate connections.  the underlying databases have different WAL policies
 	// therefore separation is required.
-	leafWrite *sqlite3.Conn
-	treeWrite *sqlite3.Conn
+	leafWrite *gosqlite.Conn
+	treeWrite *gosqlite.Conn
 
 	// for latest table queries
 	itrIdx      int
-	iterators   map[int]*sqlite3.Stmt
-	queryLatest *sqlite3.Stmt
+	iterators   map[int]*gosqlite.Stmt
+	queryLatest *gosqlite.Stmt
 
-	readConn  *sqlite3.Conn
-	queryLeaf *sqlite3.Stmt
+	readConn  *gosqlite.Conn
+	queryLeaf *gosqlite.Stmt
 
 	shards       *VersionRange
-	shardQueries map[int64]*sqlite3.Stmt
+	shardQueries map[int64]*gosqlite.Stmt
 
 	metrics metrics.Proxy
 	logger  Logger
@@ -62,7 +62,7 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 		opts.Path = defaultSQLitePath
 	}
 	if opts.Mode == 0 {
-		opts.Mode = sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE | sqlite3.OPEN_NOMUTEX
+		opts.Mode = gosqlite.OPEN_READWRITE | gosqlite.OPEN_CREATE | gosqlite.OPEN_NOMUTEX
 	}
 	if opts.MmapSize == 0 {
 		opts.MmapSize = 8 * 1024 * 1024 * 1024
@@ -100,7 +100,7 @@ func (opts SqliteDbOptions) treeConnectionString() string {
 func (opts SqliteDbOptions) EstimateMmapSize() (uint64, error) {
 	opts.Logger.Info("calculate mmap size")
 	opts.Logger.Info(fmt.Sprintf("leaf connection string: %s", opts.leafConnectionString()))
-	conn, err := sqlite3.Open(opts.leafConnectionString(), opts.Mode)
+	conn, err := gosqlite.Open(opts.leafConnectionString(), opts.Mode)
 	if err != nil {
 		return 0, err
 	}
@@ -141,8 +141,8 @@ func NewSqliteDb(pool *NodePool, opts SqliteDbOptions) (*SqliteDb, error) {
 	opts = defaultSqliteDbOptions(opts)
 	sql := &SqliteDb{
 		shards:       &VersionRange{},
-		shardQueries: make(map[int64]*sqlite3.Stmt),
-		iterators:    make(map[int]*sqlite3.Stmt),
+		shardQueries: make(map[int64]*gosqlite.Stmt),
+		iterators:    make(map[int]*gosqlite.Stmt),
 		opts:         opts,
 		pool:         pool,
 		metrics:      opts.Metrics,
@@ -246,7 +246,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 			return err
 		}
 	}
-	sql.treeWrite, err = sqlite3.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
+	sql.treeWrite, err = gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return err
 	}
@@ -260,7 +260,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	sql.leafWrite, err = sqlite3.Open(sql.opts.leafConnectionString(), sql.opts.Mode)
+	sql.leafWrite, err = gosqlite.Open(sql.opts.leafConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return err
 	}
@@ -277,8 +277,8 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	return err
 }
 
-func (sql *SqliteDb) newReadConn() (*sqlite3.Conn, error) {
-	conn, err := sqlite3.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
+func (sql *SqliteDb) newReadConn() (*gosqlite.Conn, error) {
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +304,7 @@ func (sql *SqliteDb) resetReadConn() (err error) {
 	return err
 }
 
-func (sql *SqliteDb) getReadConn() (*sqlite3.Conn, error) {
+func (sql *SqliteDb) getReadConn() (*gosqlite.Conn, error) {
 	var err error
 	if sql.readConn == nil {
 		sql.readConn, err = sql.newReadConn()
@@ -335,7 +335,7 @@ func (sql *SqliteDb) getLeaf(nodeKey NodeKey) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	var nodeBz sqlite3.RawBytes
+	var nodeBz gosqlite.RawBytes
 	err = sql.queryLeaf.Scan(&nodeBz)
 	if err != nil {
 		return nil, err
@@ -377,7 +377,7 @@ func (sql *SqliteDb) getNode(nodeKey NodeKey) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	var nodeBz sqlite3.RawBytes
+	var nodeBz gosqlite.RawBytes
 	err = q.Scan(&nodeBz)
 	if err != nil {
 		return nil, err
@@ -455,7 +455,7 @@ func (sql *SqliteDb) SaveRoot(version int64, node *Node, isCheckpoint bool) erro
 }
 
 func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
-	conn, err := sqlite3.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -506,7 +506,7 @@ func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
 // lastCheckpoint fetches the last checkpoint version from the shard table previous to the loaded root's version.
 // a return value of zero and nil error indicates no checkpoint was found.
 func (sql *SqliteDb) lastCheckpoint(treeVersion int64) (checkpointVersion int64, err error) {
-	conn, err := sqlite3.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return 0, err
 	}
@@ -536,7 +536,7 @@ func (sql *SqliteDb) lastCheckpoint(treeVersion int64) (checkpointVersion int64,
 }
 
 func (sql *SqliteDb) loadCheckpointRange() (*VersionRange, error) {
-	conn, err := sqlite3.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -586,7 +586,7 @@ func (sql *SqliteDb) getShard(version int64) (int64, error) {
 	return v, nil
 }
 
-func (sql *SqliteDb) getShardQuery(version int64) (*sqlite3.Stmt, error) {
+func (sql *SqliteDb) getShardQuery(version int64) (*gosqlite.Stmt, error) {
 	v, err := sql.getShard(version)
 	if err != nil {
 		return nil, err
@@ -879,7 +879,7 @@ func (sql *SqliteDb) closeHangingIterators() error {
 	return nil
 }
 
-func (sql *SqliteDb) getLeafIteratorQuery(start, end []byte, ascending, _ bool) (stmt *sqlite3.Stmt, idx int, err error) {
+func (sql *SqliteDb) getLeafIteratorQuery(start, end []byte, ascending, _ bool) (stmt *gosqlite.Stmt, idx int, err error) {
 	var suffix string
 	if ascending {
 		suffix = "ASC"
@@ -1045,7 +1045,7 @@ func (sql *SqliteDb) WriteLatestLeaves(tree *Tree) (err error) {
 		count        = 0
 		step         func(node *Node) error
 		logPath      = []string{"path", sql.opts.Path}
-		latestInsert *sqlite3.Stmt
+		latestInsert *gosqlite.Stmt
 	)
 	prepare := func() error {
 		latestInsert, err = sql.leafWrite.Prepare("INSERT INTO latest (key, value) VALUES (?, ?)")

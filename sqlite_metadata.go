@@ -6,15 +6,15 @@ import (
 	"os"
 	"sync"
 
-	"github.com/bvinc/go-sqlite-lite/sqlite3"
+	"github.com/eatonphil/gosqlite"
 )
 
 // SqliteKVStore is a generic KV store which uses sqlite as the backend and be used by applications to store and
 // retrieve generic key-value pairs, probably for metadata.
 type SqliteKVStore struct {
 	options SqliteDbOptions
-	write   *sqlite3.Conn
-	read    *sqlite3.Conn
+	write   *gosqlite.Conn
+	read    *gosqlite.Conn
 	lock    *sync.Mutex
 }
 
@@ -28,9 +28,9 @@ func NewSqliteKVStore(opts SqliteDbOptions) (kv *SqliteKVStore, err error) {
 
 	pageSize := os.Getpagesize()
 	kv = &SqliteKVStore{options: opts, lock: &sync.Mutex{}}
-	kv.write, err = sqlite3.Open(fmt.Sprintf(
+	kv.write, err = gosqlite.Open(fmt.Sprintf(
 		"file:%s?_journal_mode=WAL&_synchronous=OFF&&_wal_autocheckpoint=%d", opts.Path, pageSize/opts.WalSize),
-		sqlite3.OPEN_READWRITE|sqlite3.OPEN_CREATE|sqlite3.OPEN_NOMUTEX)
+		gosqlite.OPEN_READWRITE|gosqlite.OPEN_CREATE|gosqlite.OPEN_NOMUTEX)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +40,7 @@ func NewSqliteKVStore(opts SqliteDbOptions) (kv *SqliteKVStore, err error) {
 		return nil, err
 	}
 
-	kv.read, err = sqlite3.Open(fmt.Sprintf("file:%s?mode=ro", opts.Path), sqlite3.OPEN_READONLY)
+	kv.read, err = gosqlite.Open(fmt.Sprintf("file:%s?mode=ro", opts.Path), gosqlite.OPEN_READONLY)
 	if err != nil {
 		return nil, err
 	}

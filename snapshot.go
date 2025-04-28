@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/bvinc/go-sqlite-lite/sqlite3"
 	"github.com/dustin/go-humanize"
+	"github.com/eatonphil/gosqlite"
 	api "github.com/kocubinski/costor-api"
 	"github.com/kocubinski/costor-api/logz"
 )
@@ -19,11 +19,11 @@ import (
 type sqliteSnapshot struct {
 	ctx context.Context
 
-	snapshotInsert *sqlite3.Stmt
+	snapshotInsert *gosqlite.Stmt
 
 	sql        *SqliteDb
-	leafInsert *sqlite3.Stmt
-	treeInsert *sqlite3.Stmt
+	leafInsert *gosqlite.Stmt
+	treeInsert *gosqlite.Stmt
 
 	// if set will flush nodes to a tree & leaf tables as well as a snapshot table during import
 	writeTree bool
@@ -79,10 +79,10 @@ type SnapshotOptions struct {
 	TraverseOrder     TraverseOrderType
 }
 
-func NewIngestSnapshotConnection(snapshotDbPath string) (*sqlite3.Conn, error) {
+func NewIngestSnapshotConnection(snapshotDbPath string) (*gosqlite.Conn, error) {
 	newDb := !api.IsFileExistent(snapshotDbPath)
 
-	conn, err := sqlite3.Open(fmt.Sprintf("file:%s", snapshotDbPath), sqlite3.OPEN_READWRITE|sqlite3.OPEN_CREATE|sqlite3.OPEN_NOMUTEX)
+	conn, err := gosqlite.Open(fmt.Sprintf("file:%s", snapshotDbPath), gosqlite.OPEN_READWRITE|gosqlite.OPEN_CREATE|gosqlite.OPEN_NOMUTEX)
 	if err != nil {
 		return nil, err
 	}
@@ -109,9 +109,9 @@ func NewIngestSnapshotConnection(snapshotDbPath string) (*sqlite3.Conn, error) {
 	return conn, err
 }
 
-func IngestSnapshot(conn *sqlite3.Conn, prefix string, version int64, nextFn func() (*SnapshotNode, error)) (*Node, error) {
+func IngestSnapshot(conn *gosqlite.Conn, prefix string, version int64, nextFn func() (*SnapshotNode, error)) (*Node, error) {
 	var (
-		insert    *sqlite3.Stmt
+		insert    *gosqlite.Stmt
 		tableName = fmt.Sprintf("snapshot_%s_%d", prefix, version)
 		ordinal   int
 		batchSize = 200_000
@@ -316,7 +316,7 @@ func (sql *SqliteDb) ImportSnapshotFromTable(version int64, traverseOrder Traver
 		return nil, err
 	}
 
-	var q *sqlite3.Stmt
+	var q *gosqlite.Stmt
 	if traverseOrder == PostOrder {
 		q, err = read.Prepare(fmt.Sprintf("SELECT version, sequence, bytes FROM snapshot_%d ORDER BY ordinal DESC", version))
 	} else if traverseOrder == PreOrder {
@@ -325,7 +325,7 @@ func (sql *SqliteDb) ImportSnapshotFromTable(version int64, traverseOrder Traver
 	if err != nil {
 		return nil, err
 	}
-	defer func(q *sqlite3.Stmt) {
+	defer func(q *gosqlite.Stmt) {
 		err = q.Close()
 		if err != nil {
 			sql.logger.Error("error closing import query", "error", err)
@@ -368,7 +368,7 @@ func (sql *SqliteDb) ImportMostRecentSnapshot(targetVersion int64, traverseOrder
 		return nil, 0, err
 	}
 	q, err := read.Prepare("SELECT tbl_name FROM changelog.sqlite_master WHERE type='table' AND name LIKE 'snapshot_%' ORDER BY name DESC")
-	defer func(q *sqlite3.Stmt) {
+	defer func(q *gosqlite.Stmt) {
 		err = q.Close()
 		if err != nil {
 			sql.logger.Error("error closing import query", "error", err)
@@ -738,7 +738,7 @@ func rehashTree(node *Node) {
 }
 
 type sqliteImport struct {
-	query      *sqlite3.Stmt
+	query      *gosqlite.Stmt
 	pool       *NodePool
 	loadLeaves bool
 
@@ -764,7 +764,7 @@ func (sqlImport *sqliteImport) queryStepPreOrder() (node *Node, err error) {
 	if err != nil {
 		return nil, err
 	}
-	var bz sqlite3.RawBytes
+	var bz gosqlite.RawBytes
 	var version, seq int
 	err = sqlImport.query.Scan(&version, &seq, &bz)
 	if err != nil {
@@ -812,7 +812,7 @@ func (sqlImport *sqliteImport) queryStepPostOrder() (node *Node, err error) {
 	if err != nil {
 		return nil, err
 	}
-	var bz sqlite3.RawBytes
+	var bz gosqlite.RawBytes
 	var version, seq int
 	err = sqlImport.query.Scan(&version, &seq, &bz)
 	if err != nil {

@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bvinc/go-sqlite-lite/sqlite3"
+	"github.com/eatonphil/gosqlite"
+
 	"github.com/cosmos/iavl/v2/metrics"
 )
 
@@ -228,7 +229,7 @@ func (i *TreeIterator) Close() error {
 
 type LeafIterator struct {
 	sql     *SqliteDb
-	itrStmt *sqlite3.Stmt
+	itrStmt *gosqlite.Stmt
 	start   []byte
 	end     []byte
 	valid   bool

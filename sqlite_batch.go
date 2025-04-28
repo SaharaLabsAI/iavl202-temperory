@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bvinc/go-sqlite-lite/sqlite3"
 	"github.com/dustin/go-humanize"
+	"github.com/eatonphil/gosqlite"
 
 	"github.com/cosmos/iavl/v2/metrics"
 )
@@ -22,13 +22,13 @@ type sqliteBatch struct {
 	leafCount int64
 	leafSince time.Time
 
-	leafInsert   *sqlite3.Stmt
-	deleteInsert *sqlite3.Stmt
-	latestInsert *sqlite3.Stmt
-	latestDelete *sqlite3.Stmt
-	treeInsert   *sqlite3.Stmt
-	leafOrphan   *sqlite3.Stmt
-	treeOrphan   *sqlite3.Stmt
+	leafInsert   *gosqlite.Stmt
+	deleteInsert *gosqlite.Stmt
+	latestInsert *gosqlite.Stmt
+	latestDelete *gosqlite.Stmt
+	treeInsert   *gosqlite.Stmt
+	leafOrphan   *gosqlite.Stmt
+	treeOrphan   *gosqlite.Stmt
 }
 
 func (b *sqliteBatch) newChangeLogBatch() (err error) {

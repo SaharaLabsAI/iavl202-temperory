@@ -5,11 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bvinc/go-sqlite-lite/sqlite3"
-	"github.com/cosmos/iavl/v2/testutil"
 	"github.com/dustin/go-humanize"
+	"github.com/eatonphil/gosqlite"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
+
+	"github.com/cosmos/iavl/v2/testutil"
 )
 
 func TestBuildSqlite(t *testing.T) {
@@ -45,7 +46,7 @@ func TestBuildSqlite(t *testing.T) {
 
 	require.NoError(t, conn.Begin())
 
-	var stmt *sqlite3.Stmt
+	var stmt *gosqlite.Stmt
 	stmt, err = conn.Prepare("INSERT INTO node(version, seq, hash, key, height, size, l_seq, l_version, r_seq, r_version)" +
 		"VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 
@@ -129,7 +130,7 @@ func TestNodeKeyFormat(t *testing.T) {
 
 func TestMmap(t *testing.T) {
 	tmpDir := t.TempDir()
-	conn, err := sqlite3.Open(tmpDir + "/test.db")
+	conn, err := gosqlite.Open(tmpDir + "/test.db")
 	require.NoError(t, err)
 	stmt, err := conn.Prepare("PRAGMA mmap_size=1000000000000")
 	require.NoError(t, err)
@@ -159,14 +160,14 @@ func Test_ConcurrentDetach(t *testing.T) {
 	t.Skipf("this test will sometimes panic within a panic, kept to show what doesn't work")
 
 	dir := t.TempDir()
-	conn, err := sqlite3.Open(dir + "/one.db")
+	conn, err := gosqlite.Open(dir + "/one.db")
 	require.NoError(t, err)
 	err = conn.Exec("CREATE TABLE foo (id INTEGER PRIMARY KEY)")
 	require.NoError(t, err)
 	err = conn.Exec("INSERT INTO foo VALUES (4)")
 	require.NoError(t, err)
 
-	conn2, err := sqlite3.Open(dir + "/two.db")
+	conn2, err := gosqlite.Open(dir + "/two.db")
 	require.NoError(t, err)
 	err = conn2.Exec("CREATE TABLE bar (id INTEGER PRIMARY KEY)")
 	require.NoError(t, err)
@@ -178,7 +179,7 @@ func Test_ConcurrentDetach(t *testing.T) {
 	err = conn.Exec("SELECT * FROM bar")
 	require.NoError(t, err)
 
-	conn3, err := sqlite3.Open(dir + "/three.db")
+	conn3, err := gosqlite.Open(dir + "/three.db")
 	require.NoError(t, err)
 	err = conn3.Exec("CREATE TABLE bar (id INTEGER PRIMARY KEY)")
 	require.NoError(t, err)
@@ -213,7 +214,7 @@ func Test_ConcurrentDetach(t *testing.T) {
 func Test_ConcurrentQuery(t *testing.T) {
 	t.Skipf("this test will panic within a panic, kept to show what doesn't work")
 	dir := t.TempDir()
-	conn, err := sqlite3.Open(dir + "/one.db")
+	conn, err := gosqlite.Open(dir + "/one.db")
 	require.NoError(t, err)
 	err = conn.Exec("CREATE TABLE foo (id INTEGER PRIMARY KEY)")
 	require.NoError(t, err)
@@ -270,7 +271,7 @@ func Test_ConcurrentIndexRead(t *testing.T) {
 	dir := t.TempDir()
 	seed := uint64(1234)
 	count := 1_000_000
-	conn, err := sqlite3.Open(dir + "/db.db")
+	conn, err := gosqlite.Open(dir + "/db.db")
 	require.NoError(t, err)
 	r := rand.New(rand.NewSource(seed))
 	require.NoError(t, conn.Exec("PRAGMA synchronous = OFF"))
@@ -297,13 +298,13 @@ func Test_ConcurrentIndexRead(t *testing.T) {
 	}
 	require.NoError(t, conn.Commit())
 	r = rand.New(rand.NewSource(seed))
-	reader, err := sqlite3.Open(dir + "/db.db")
+	reader, err := gosqlite.Open(dir + "/db.db")
 	require.NoError(t, err)
 	t.Log("query 100_000 rows")
 	stmt, err := reader.Prepare("SELECT val FROM bar WHERE id = ?")
 	require.NoError(t, err)
 	var v int
-	go func(q *sqlite3.Stmt) {
+	go func(q *gosqlite.Stmt) {
 		for i := 0; i < count; i++ {
 			n, err := r.Read(bz)
 			require.NoError(t, err)

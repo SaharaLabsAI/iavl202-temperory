@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/bvinc/go-sqlite-lite/sqlite3"
 	"github.com/dustin/go-humanize"
+	"github.com/eatonphil/gosqlite"
 )
 
 type pruneSignal struct {
@@ -79,9 +79,9 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 		pruneVersion     int64
 		nextPruneVersion int64
 		checkpoints      VersionRange
-		orphanQuery      *sqlite3.Stmt
-		deleteOrphan     *sqlite3.Stmt
-		deleteLeaf       *sqlite3.Stmt
+		orphanQuery      *gosqlite.Stmt
+		deleteOrphan     *gosqlite.Stmt
+		deleteLeaf       *gosqlite.Stmt
 		pruneCount       int64
 		pruneStartTime   time.Time
 		err              error
@@ -263,10 +263,10 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 		pruneVersion     int64
 		pruneCount       int64
 		pruneStartTime   time.Time
-		orphanQuery      *sqlite3.Stmt
+		orphanQuery      *gosqlite.Stmt
 		// TODO use a map
 		deleteBranch func(shardId int64, version int64, sequence int) (err error)
-		deleteOrphan *sqlite3.Stmt
+		deleteOrphan *gosqlite.Stmt
 	)
 	beginPruneBatch := func(version int64) (err error) {
 		if err = w.sql.treeWrite.Begin(); err != nil {
