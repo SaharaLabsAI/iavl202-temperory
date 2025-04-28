@@ -306,47 +306,33 @@ func (l *LeafIterator) Close() error {
 }
 
 func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err error) {
-	kvItr := &KVIterator{
-		sql:     tree.sql,
-		start:   start,
-		end:     end,
-		valid:   true,
-		metrics: tree.metricsProxy,
+	if tree.storeLatestLeaves {
+		leafItr := &LeafIterator{
+			sql:     tree.sql,
+			start:   start,
+			end:     end,
+			valid:   true,
+			metrics: tree.metricsProxy,
+		}
+		// TODO: handle inclusive
+		// TODO: profile re-use of some prepared statement to see if there is improvement
+		leafItr.itrStmt, leafItr.itrIdx, err = tree.sql.getLeafIteratorQuery(start, end, true, inclusive)
+		if err != nil {
+			return nil, err
+		}
+		itr = leafItr
+	} else {
+		itr = &TreeIterator{
+			tree:      tree,
+			start:     start,
+			end:       end,
+			ascending: true,
+			inclusive: inclusive,
+			valid:     true,
+			stack:     []*Node{tree.root},
+			metrics:   tree.metricsProxy,
+		}
 	}
-
-	kvItr.itrStmt, kvItr.itrIdx, err = tree.sql.getKVIteratorQuery(tree.version, start, end, true, inclusive)
-	if err != nil {
-		return nil, err
-	}
-
-	itr = kvItr
-	// if tree.storeLatestLeaves {
-	// 	leafItr := &LeafIterator{
-	// 		sql:     tree.sql,
-	// 		start:   start,
-	// 		end:     end,
-	// 		valid:   true,
-	// 		metrics: tree.metricsProxy,
-	// 	}
-	// 	// TODO: handle inclusive
-	// 	// TODO: profile re-use of some prepared statement to see if there is improvement
-	// 	leafItr.itrStmt, leafItr.itrIdx, err = tree.sql.getLeafIteratorQuery(start, end, true, inclusive)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	itr = leafItr
-	// } else {
-	// 	itr = &TreeIterator{
-	// 		tree:      tree,
-	// 		start:     start,
-	// 		end:       end,
-	// 		ascending: true,
-	// 		inclusive: inclusive,
-	// 		valid:     true,
-	// 		stack:     []*Node{tree.root},
-	// 		metrics:   tree.metricsProxy,
-	// 	}
-	// }
 
 	if tree.metricsProxy != nil {
 		tree.metricsProxy.IncrCounter(1, "iavl_v2", "iterator", "open")
@@ -356,6 +342,161 @@ func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err
 }
 
 func (tree *Tree) ReverseIterator(start, end []byte) (itr Iterator, err error) {
+	if tree.storeLatestLeaves {
+		leafItr := &LeafIterator{
+			sql:     tree.sql,
+			start:   start,
+			end:     end,
+			valid:   true,
+			metrics: tree.metricsProxy,
+		}
+		// TODO: handle inclusive
+		// TODO: profile re-use of some prepared statement to see if there is improvement
+		leafItr.itrStmt, leafItr.itrIdx, err = tree.sql.getLeafIteratorQuery(start, end, false, false)
+		if err != nil {
+			return nil, err
+		}
+		itr = leafItr
+	} else {
+		itr = &TreeIterator{
+			tree:      tree,
+			start:     start,
+			end:       end,
+			ascending: false,
+			inclusive: false,
+			valid:     true,
+			stack:     []*Node{tree.root},
+			metrics:   tree.metricsProxy,
+		}
+	}
+
+	if tree.metricsProxy != nil {
+		tree.metricsProxy.IncrCounter(1, "iavl_v2", "iterator", "open")
+	}
+	itr.Next()
+	return itr, nil
+}
+
+type KVIterator struct {
+	sql       *SqliteDb
+	itrStmt   *gosqlite.Stmt
+	start     []byte
+	end       []byte
+	valid     bool
+	err       error
+	key       []byte
+	value     []byte
+	metrics   metrics.Proxy
+	itrIdx    int
+	ascending bool
+	inclusive bool
+}
+
+func (i *KVIterator) Domain() (start []byte, end []byte) {
+	return i.start, i.end
+}
+
+func (i *KVIterator) Valid() bool {
+	return i.valid
+}
+
+func (i *KVIterator) Next() {
+	if i.metrics != nil {
+		defer i.metrics.MeasureSince(time.Now(), "iavl_v2", "kv iterator", "next")
+	}
+	if !i.valid {
+		return
+	}
+
+	hasRow, err := i.itrStmt.Step()
+	if err != nil {
+		closeErr := i.Close()
+		if closeErr != nil {
+			i.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
+		}
+		return
+	}
+	if !hasRow {
+		closeErr := i.Close()
+		if closeErr != nil {
+			i.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
+		}
+		return
+	}
+
+	if err = i.itrStmt.Scan(&i.key, &i.value); err != nil {
+		closeErr := i.Close()
+		if closeErr != nil {
+			i.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
+		}
+		return
+	}
+}
+
+func (i *KVIterator) Key() (key []byte) {
+	return i.key
+}
+
+func (i *KVIterator) Value() (value []byte) {
+	return i.value
+}
+
+func (i *KVIterator) Error() error {
+	return i.err
+}
+
+func (i *KVIterator) Close() error {
+	if i.valid {
+		if i.metrics != nil {
+			i.metrics.IncrCounter(1, "iavl_v2", "iterator", "close")
+		}
+		i.valid = false
+		delete(i.sql.kvIterators, i.itrIdx)
+		return i.itrStmt.Close()
+	}
+	return nil
+}
+
+func (tree *Tree) IteratorAt(version int64, start, end []byte, inclusive bool) (Iterator, error) {
+	hasVersion, err := tree.sql.hasAnyVersionKV(version)
+	if err != nil {
+		return nil, err
+	}
+	if !hasVersion {
+		return nil, fmt.Errorf("version %d key value not found", version)
+	}
+
+	kvItr := &KVIterator{
+		sql:     tree.sql,
+		start:   start,
+		end:     end,
+		valid:   true,
+		metrics: tree.metricsProxy,
+	}
+
+	kvItr.itrStmt, kvItr.itrIdx, err = tree.sql.getKVIteratorQuery(version, start, end, true, inclusive)
+	if err != nil {
+		return nil, err
+	}
+
+	if tree.metricsProxy != nil {
+		tree.metricsProxy.IncrCounter(1, "iavl_v2", "iterator", "open")
+	}
+
+	kvItr.Next()
+
+	return kvItr, err
+}
+
+func (tree *Tree) ReverseIteratorAt(version int64, start, end []byte) (Iterator, error) {
+	hasVersion, err := tree.sql.hasAnyVersionKV(version)
+	if err != nil {
+		return nil, err
+	}
+	if !hasVersion {
+		return nil, fmt.Errorf("version %d key value not found", version)
+	}
+
 	kvItr := &KVIterator{
 		sql:     tree.sql,
 		start:   start,
@@ -369,115 +510,11 @@ func (tree *Tree) ReverseIterator(start, end []byte) (itr Iterator, err error) {
 		return nil, err
 	}
 
-	itr = kvItr
-	// if tree.storeLatestLeaves {
-	// 	leafItr := &LeafIterator{
-	// 		sql:     tree.sql,
-	// 		start:   start,
-	// 		end:     end,
-	// 		valid:   true,
-	// 		metrics: tree.metricsProxy,
-	// 	}
-	// 	// TODO: handle inclusive
-	// 	// TODO: profile re-use of some prepared statement to see if there is improvement
-	// 	leafItr.itrStmt, leafItr.itrIdx, err = tree.sql.getLeafIteratorQuery(start, end, false, false)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	itr = leafItr
-	// } else {
-	// 	itr = &TreeIterator{
-	// 		tree:      tree,
-	// 		start:     start,
-	// 		end:       end,
-	// 		ascending: false,
-	// 		inclusive: false,
-	// 		valid:     true,
-	// 		stack:     []*Node{tree.root},
-	// 		metrics:   tree.metricsProxy,
-	// 	}
-	// }
-
 	if tree.metricsProxy != nil {
 		tree.metricsProxy.IncrCounter(1, "iavl_v2", "iterator", "open")
 	}
-	itr.Next()
-	return itr, nil
-}
 
-type KVIterator struct {
-	sql     *SqliteDb
-	itrStmt *gosqlite.Stmt
-	start   []byte
-	end     []byte
-	valid   bool
-	err     error
-	key     []byte
-	value   []byte
-	metrics metrics.Proxy
-	itrIdx  int
-}
+	kvItr.Next()
 
-func (l *KVIterator) Domain() (start []byte, end []byte) {
-	return l.start, l.end
-}
-
-func (l *KVIterator) Valid() bool {
-	return l.valid
-}
-
-func (l *KVIterator) Next() {
-	if l.metrics != nil {
-		defer l.metrics.MeasureSince(time.Now(), "iavl_v2", "kv iterator", "next")
-	}
-	if !l.valid {
-		return
-	}
-
-	hasRow, err := l.itrStmt.Step()
-	if err != nil {
-		closeErr := l.Close()
-		if closeErr != nil {
-			l.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
-		}
-		return
-	}
-	if !hasRow {
-		closeErr := l.Close()
-		if closeErr != nil {
-			l.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
-		}
-		return
-	}
-	if err = l.itrStmt.Scan(&l.key, &l.value); err != nil {
-		closeErr := l.Close()
-		if closeErr != nil {
-			l.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
-		}
-		return
-	}
-}
-
-func (l *KVIterator) Key() (key []byte) {
-	return l.key
-}
-
-func (l *KVIterator) Value() (value []byte) {
-	return l.value
-}
-
-func (l *KVIterator) Error() error {
-	return l.err
-}
-
-func (l *KVIterator) Close() error {
-	if l.valid {
-		if l.metrics != nil {
-			l.metrics.IncrCounter(1, "iavl_v2", "iterator", "close")
-		}
-		l.valid = false
-		delete(l.sql.kvIterators, l.itrIdx)
-		return l.itrStmt.Close()
-	}
-	return nil
+	return kvItr, nil
 }

@@ -1230,7 +1230,7 @@ func (sql *SqliteDb) getReadKVConn() (*gosqlite.Conn, error) {
 }
 
 func (sql *SqliteDb) GetValue(version int64, key []byte) ([]byte, error) {
-	if key == nil || len(key) == 0 {
+	if len(key) == 0 {
 		return nil, fmt.Errorf("get value with key length 0")
 	}
 
@@ -1264,7 +1264,7 @@ func (sql *SqliteDb) GetValue(version int64, key []byte) ([]byte, error) {
 	return val, nil
 }
 
-func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascending, _ bool) (stmt *gosqlite.Stmt, idx int, err error) {
+func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascending, inclusive bool) (stmt *gosqlite.Stmt, idx int, err error) {
 	var suffix string
 	if ascending {
 		suffix = "ASC"
@@ -1280,6 +1280,11 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 	sql.kvItrIdx++
 	idx = sql.kvItrIdx
 
+	endKey := "key < ?"
+	if inclusive {
+		endKey = "key <= ?"
+	}
+
 	switch {
 	case start == nil && end == nil:
 		stmt, err = conn.Prepare(
@@ -1292,7 +1297,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 		}
 	case start == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM version_kv WHERE version <= ? AND key < ? ORDER BY key %s", suffix))
+			fmt.Sprintf("SELECT key, value FROM version_kv WHERE version <= ? AND %s ORDER BY key %s", endKey, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1310,7 +1315,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 		}
 	default:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM version_kv WHERE version <= ? AND key >= ? AND key < ? ORDER BY key %s", suffix))
+			fmt.Sprintf("SELECT key, value FROM version_kv WHERE version <= ? AND key >= ? AND %s ORDER BY key %s", endKey, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1320,5 +1325,25 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 	}
 
 	sql.kvIterators[idx] = stmt
+
 	return stmt, idx, err
+}
+
+func (sql *SqliteDb) hasAnyVersionKV(version int64) (bool, error) {
+	conn, err := sql.getReadKVConn()
+	if err != nil {
+		return false, err
+	}
+
+	stmt, err := conn.Prepare("SELECT version FROM version_kv WHERE version = ? LIMIT 1")
+	if err != nil {
+		return false, err
+	}
+	defer stmt.Close()
+
+	if err = stmt.Bind(version); err != nil {
+		return false, err
+	}
+
+	return stmt.Step()
 }
