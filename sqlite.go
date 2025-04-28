@@ -42,6 +42,12 @@ type SqliteDb struct {
 	leafWrite *gosqlite.Conn
 	treeWrite *gosqlite.Conn
 
+	// Another database for version key value, because of current node serialize method, we cannot implement
+	// on leaf database.
+	kvWrite    *gosqlite.Conn
+	readKVConn *gosqlite.Conn
+	queryKV    *gosqlite.Stmt
+
 	// for latest table queries
 	itrIdx      int
 	iterators   map[int]*gosqlite.Stmt
@@ -95,6 +101,10 @@ func (opts SqliteDbOptions) leafConnectionString() string {
 
 func (opts SqliteDbOptions) treeConnectionString() string {
 	return fmt.Sprintf("file:%s/tree.sqlite%s", opts.Path, opts.connArgs())
+}
+
+func (opts SqliteDbOptions) kvConnectionString() string {
+	return fmt.Sprintf("file:%s/kv.sqlite%s", opts.Path, opts.connArgs())
 }
 
 func (opts SqliteDbOptions) EstimateMmapSize() (uint64, error) {
@@ -270,7 +280,21 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
+	sql.kvWrite, err = gosqlite.Open(sql.opts.kvConnectionString(), sql.opts.Mode)
+	if err != nil {
+		return err
+	}
+
+	err = sql.kvWrite.Exec("PRAGMA synchronous=OFF;")
+	if err != nil {
+		return err
+	}
+
 	if err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", sql.opts.walPages)); err != nil {
+		return err
+	}
+
+	if err = sql.kvWrite.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", sql.opts.walPages)); err != nil {
 		return err
 	}
 
@@ -1131,4 +1155,70 @@ func (sql *SqliteDb) Logger() Logger {
 
 func DefaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	return defaultSqliteDbOptions(opts)
+}
+
+func (sql *SqliteDb) newReadKVConn() (*gosqlite.Conn, error) {
+	conn, err := gosqlite.Open(sql.opts.kvConnectionString(), sql.opts.Mode)
+	if err != nil {
+		return nil, err
+	}
+	err = conn.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", sql.opts.MmapSize))
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
+}
+
+func (sql *SqliteDb) resetKVReadConn() (err error) {
+	if sql.readKVConn != nil {
+		err = sql.readKVConn.Close()
+		if err != nil {
+			return err
+		}
+	}
+	sql.readKVConn, err = sql.newReadKVConn()
+	return err
+}
+
+func (sql *SqliteDb) getReadKVConn() (*gosqlite.Conn, error) {
+	var err error
+	if sql.readKVConn == nil {
+		sql.readKVConn, err = sql.newReadKVConn()
+	}
+	return sql.readKVConn, err
+}
+
+func (sql *SqliteDb) GetValue(version int64, key []byte) ([]byte, error) {
+	if key == nil || len(key) == 0 {
+		return nil, fmt.Errorf("get value with key length 0")
+	}
+
+	var err error
+	if sql.queryKV == nil {
+		sql.queryKV, err = sql.readKVConn.Prepare("SELECT value FROM version_kv WHERE version <= ? AND key = ?")
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err = sql.queryKV.Bind(version, key); err != nil {
+		return nil, err
+	}
+	defer sql.queryKV.Reset()
+
+	hasRow, err := sql.queryKV.Step()
+	if err != nil {
+		return nil, err
+	}
+	if !hasRow {
+		return nil, nil
+	}
+
+	var val []byte
+	err = sql.queryLatest.Scan(&val)
+	if err != nil {
+		return nil, err
+	}
+
+	return val, nil
 }
