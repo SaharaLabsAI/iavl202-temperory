@@ -29,10 +29,15 @@ type sqliteBatch struct {
 	treeInsert   *gosqlite.Stmt
 	leafOrphan   *gosqlite.Stmt
 	treeOrphan   *gosqlite.Stmt
+
+	kvInsert *gosqlite.Stmt
 }
 
 func (b *sqliteBatch) newChangeLogBatch() (err error) {
 	if err = b.sql.leafWrite.Begin(); err != nil {
+		return err
+	}
+	if err = b.sql.kvWrite.Begin(); err != nil {
 		return err
 	}
 	b.leafInsert, err = b.sql.leafWrite.Prepare("INSERT OR REPLACE INTO leaf (version, sequence, bytes) VALUES (?, ?, ?)")
@@ -52,6 +57,10 @@ func (b *sqliteBatch) newChangeLogBatch() (err error) {
 		return err
 	}
 	b.leafOrphan, err = b.sql.leafWrite.Prepare("INSERT INTO leaf_orphan (version, sequence, at) VALUES (?, ?, ?)")
+	if err != nil {
+		return err
+	}
+	b.kvInsert, err = b.sql.kvWrite.Prepare("INSERT INTO version_kv (version, key, value) VALUES (?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -88,6 +97,12 @@ func (b *sqliteBatch) changelogBatchCommit() error {
 		return err
 	}
 	if err := b.leafOrphan.Close(); err != nil {
+		return err
+	}
+	if err := b.sql.kvWrite.Commit(); err != nil {
+		return err
+	}
+	if err := b.kvInsert.Close(); err != nil {
 		return err
 	}
 
@@ -162,6 +177,9 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 	)
 	for i, leaf := range tree.leaves {
 		b.leafCount++
+		if err = b.kvInsert.Exec(leaf.nodeKey.Version(), leaf.key, leaf.value); err != nil {
+			return 0, err
+		}
 		if tree.storeLatestLeaves {
 			val = leaf.value
 			leaf.value = nil
@@ -224,6 +242,11 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 	}
 
 	err = tree.sql.leafWrite.Exec("CREATE UNIQUE INDEX IF NOT EXISTS leaf_idx ON leaf (version, sequence)")
+	if err != nil {
+		return b.leafCount, err
+	}
+
+	err = tree.sql.kvWrite.Exec("CREATE UNIQUE INDEX IF NOT EXISTS kv_idx ON version_kv (version, key)")
 	if err != nil {
 		return b.leafCount, err
 	}

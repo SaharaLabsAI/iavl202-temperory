@@ -44,9 +44,11 @@ type SqliteDb struct {
 
 	// Another database for version key value, because of current node serialize method, we cannot implement
 	// on leaf database.
-	kvWrite    *gosqlite.Conn
-	readKVConn *gosqlite.Conn
-	queryKV    *gosqlite.Stmt
+	kvWrite     *gosqlite.Conn
+	readKVConn  *gosqlite.Conn
+	queryKV     *gosqlite.Stmt
+	kvItrIdx    int
+	kvIterators map[int]*gosqlite.Stmt
 
 	// for latest table queries
 	itrIdx      int
@@ -153,6 +155,7 @@ func NewSqliteDb(pool *NodePool, opts SqliteDbOptions) (*SqliteDb, error) {
 		shards:       &VersionRange{},
 		shardQueries: make(map[int64]*gosqlite.Stmt),
 		iterators:    make(map[int]*gosqlite.Stmt),
+		kvIterators:  make(map[int]*gosqlite.Stmt),
 		opts:         opts,
 		pool:         pool,
 		metrics:      opts.Metrics,
@@ -238,6 +241,33 @@ CREATE INDEX leaf_orphan_idx ON leaf_orphan (at);`)
 			return err
 		}
 		err = sql.leafWrite.Exec("PRAGMA journal_mode=WAL;")
+		if err != nil {
+			return err
+		}
+	}
+	if err = q.Close(); err != nil {
+		return err
+	}
+
+	q, err = sql.kvWrite.Prepare("SELECT name from sqlite_master WHERE type='table' AND name='version_kv'")
+	if err != nil {
+		return err
+	}
+	if !hasRow {
+		err = sql.kvWrite.Exec(`
+CREATE TABLE version_kv (version int, key blob, value blob, PRIMARY KEY (version, key));
+CREATE INDEX version_kv_idx ON version_kv (version);`)
+		if err != nil {
+			return err
+		}
+
+		pageSize := os.Getpagesize()
+		sql.logger.Info(fmt.Sprintf("setting page size to %s", humanize.Bytes(uint64(pageSize))))
+		err = sql.kvWrite.Exec(fmt.Sprintf("PRAGMA page_size=%d; VACUUM;", pageSize))
+		if err != nil {
+			return err
+		}
+		err = sql.kvWrite.Exec("PRAGMA journal_mode=WAL;")
 		if err != nil {
 			return err
 		}
@@ -811,6 +841,9 @@ func (sql *SqliteDb) Revert(version int) error {
 	if err := sql.leafWrite.Exec("DELETE FROM leaf_orphan WHERE at > ?", version); err != nil {
 		return err
 	}
+	if err := sql.kvWrite.Exec("DELETE FROM version_kv WHERE version > ?", version); err != nil {
+		return err
+	}
 	if err := sql.treeWrite.Exec("DELETE FROM root WHERE version > ?", version); err != nil {
 		return err
 	}
@@ -899,7 +932,15 @@ func (sql *SqliteDb) closeHangingIterators() error {
 		}
 		delete(sql.iterators, idx)
 	}
+	for idx, stmt := range sql.kvIterators {
+		sql.logger.Warn(fmt.Sprintf("closing hanging iterator idx=%d", idx))
+		if err := stmt.Close(); err != nil {
+			return err
+		}
+		delete(sql.kvIterators, idx)
+	}
 	sql.itrIdx = 0
+	sql.kvItrIdx = 0
 	return nil
 }
 
@@ -1221,4 +1262,63 @@ func (sql *SqliteDb) GetValue(version int64, key []byte) ([]byte, error) {
 	}
 
 	return val, nil
+}
+
+func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascending, _ bool) (stmt *gosqlite.Stmt, idx int, err error) {
+	var suffix string
+	if ascending {
+		suffix = "ASC"
+	} else {
+		suffix = "DESC"
+	}
+
+	conn, err := sql.getReadKVConn()
+	if err != nil {
+		return nil, idx, err
+	}
+
+	sql.kvItrIdx++
+	idx = sql.kvItrIdx
+
+	switch {
+	case start == nil && end == nil:
+		stmt, err = conn.Prepare(
+			fmt.Sprintf("SELECT key, value FROM version_kv WHERE version <= ? ORDER BY key %s", suffix))
+		if err != nil {
+			return nil, idx, err
+		}
+		if err = stmt.Bind(version); err != nil {
+			return nil, idx, err
+		}
+	case start == nil:
+		stmt, err = conn.Prepare(
+			fmt.Sprintf("SELECT key, value FROM version_kv WHERE version <= ? AND key < ? ORDER BY key %s", suffix))
+		if err != nil {
+			return nil, idx, err
+		}
+		if err = stmt.Bind(version, end); err != nil {
+			return nil, idx, err
+		}
+	case end == nil:
+		stmt, err = conn.Prepare(
+			fmt.Sprintf("SELECT key, value FROM version_kv WHERE version <= ? AND key >= ? ORDER BY key %s", suffix))
+		if err != nil {
+			return nil, idx, err
+		}
+		if err = stmt.Bind(version, start); err != nil {
+			return nil, idx, err
+		}
+	default:
+		stmt, err = conn.Prepare(
+			fmt.Sprintf("SELECT key, value FROM version_kv WHERE version <= ? AND key >= ? AND key < ? ORDER BY key %s", suffix))
+		if err != nil {
+			return nil, idx, err
+		}
+		if err = stmt.Bind(version, start, end); err != nil {
+			return nil, idx, err
+		}
+	}
+
+	sql.kvIterators[idx] = stmt
+	return stmt, idx, err
 }
