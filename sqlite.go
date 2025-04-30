@@ -254,8 +254,9 @@ CREATE INDEX leaf_orphan_idx ON leaf_orphan (at);`)
 	}
 	if !hasRow {
 		err = sql.kvWrite.Exec(`
-CREATE TABLE version_kv (version int, key blob, value blob, PRIMARY KEY (version, key));
-CREATE INDEX version_kv_idx ON version_kv (version);`)
+CREATE TABLE version_kv (version int, key blob, value blob);
+CREATE INDEX version_idx ON version_kv (version);
+CREATE INDEX version_key_idx ON version_kv (version, key);`)
 		if err != nil {
 			return err
 		}
@@ -339,7 +340,7 @@ func (sql *SqliteDb) newReadConn() (*gosqlite.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS version_kv;", sql.opts.kvConnectionString()))
+	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS kv;", sql.opts.kvConnectionString()))
 	if err != nil {
 		return nil, err
 	}
@@ -1212,7 +1213,7 @@ func (sql *SqliteDb) GetValue(version int64, key []byte) ([]byte, error) {
 	}
 
 	if sql.queryKV == nil {
-		sql.queryKV, err = conn.Prepare("SELECT value FROM version_kv WHERE version <= ? AND key = ?")
+		sql.queryKV, err = conn.Prepare("SELECT value FROM kv.version_kv WHERE version <= ? AND key = ?")
 		if err != nil {
 			return nil, err
 		}
@@ -1232,7 +1233,7 @@ func (sql *SqliteDb) GetValue(version int64, key []byte) ([]byte, error) {
 	}
 
 	var val []byte
-	err = sql.queryLatest.Scan(&val)
+	err = sql.queryKV.Scan(&val)
 	if err != nil {
 		return nil, err
 	}
@@ -1264,7 +1265,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 	switch {
 	case start == nil && end == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM version_kv WHERE version <= ? ORDER BY key %s", suffix))
+			fmt.Sprintf("SELECT key, value FROM kv.version_kv WHERE version <= ? ORDER BY key %s", suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1273,7 +1274,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 		}
 	case start == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM version_kv WHERE version <= ? AND %s ORDER BY key %s", endKey, suffix))
+			fmt.Sprintf("SELECT key, value FROM kv.version_kv WHERE version <= ? AND %s ORDER BY key %s", endKey, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1282,7 +1283,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 		}
 	case end == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM version_kv WHERE version <= ? AND key >= ? ORDER BY key %s", suffix))
+			fmt.Sprintf("SELECT key, value FROM kv.version_kv WHERE version <= ? AND key >= ? ORDER BY key %s", suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1291,7 +1292,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 		}
 	default:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM version_kv WHERE version <= ? AND key >= ? AND %s ORDER BY key %s", endKey, suffix))
+			fmt.Sprintf("SELECT key, value FROM kv.version_kv WHERE version <= ? AND key >= ? AND %s ORDER BY key %s", endKey, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1311,7 +1312,7 @@ func (sql *SqliteDb) hasAnyVersionKV(version int64) (bool, error) {
 		return false, err
 	}
 
-	stmt, err := conn.Prepare("SELECT version FROM version_kv WHERE version = ? LIMIT 1")
+	stmt, err := conn.Prepare("SELECT version FROM kv.version_kv WHERE version = ? LIMIT 1")
 	if err != nil {
 		return false, err
 	}

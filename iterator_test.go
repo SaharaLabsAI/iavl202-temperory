@@ -309,8 +309,9 @@ func Test_IteratorTree(t *testing.T) {
 }
 
 func Test_IteratorVersionKV(t *testing.T) {
+	tmpDir := t.TempDir()
 	pool := iavl.NewNodePool()
-	sql, err := iavl.NewInMemorySqliteDb(pool)
+	sql, err := iavl.NewSqliteDb(pool, iavl.SqliteDbOptions{Path: tmpDir})
 	require.NoError(t, err)
 
 	opts := iavl.DefaultTreeOptions()
