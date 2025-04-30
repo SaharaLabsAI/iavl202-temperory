@@ -465,15 +465,30 @@ func (sql *SqliteDb) Close() error {
 				return err
 			}
 		}
+		if sql.queryKV != nil {
+			if err := sql.queryKV.Close(); err != nil {
+				return err
+			}
+		}
+		if sql.queryLatest != nil {
+			if err := sql.queryLatest.Close(); err != nil {
+				return err
+			}
+		}
 		if err := sql.readConn.Close(); err != nil {
 			return err
 		}
 	}
+
 	if err := sql.leafWrite.Close(); err != nil {
 		return err
 	}
 
 	if err := sql.treeWrite.Close(); err != nil {
+		return err
+	}
+
+	if err := sql.kvWrite.Close(); err != nil {
 		return err
 	}
 	return nil
@@ -1213,16 +1228,16 @@ func (sql *SqliteDb) GetAt(version int64, key []byte) ([]byte, error) {
 	}
 
 	if sql.queryKV == nil {
-		sql.queryKV, err = conn.Prepare("SELECT value FROM kv.version_kv WHERE version <= ? AND key = ? ORDER BY version DESC LIMIT 1")
+		sql.queryKV, err = conn.Prepare("SELECT value FROM kv.version_kv WHERE version <= ? AND key = ? ORDER BY version DESC")
 		if err != nil {
 			return nil, err
 		}
 	}
+	defer sql.queryKV.Reset()
 
 	if err = sql.queryKV.Bind(version, key); err != nil {
 		return nil, err
 	}
-	defer sql.queryKV.Close()
 
 	hasRow, err := sql.queryKV.Step()
 	if err != nil {
@@ -1312,7 +1327,7 @@ func (sql *SqliteDb) hasAnyVersionKV(version int64) (bool, error) {
 		return false, err
 	}
 
-	stmt, err := conn.Prepare("SELECT version FROM kv.version_kv WHERE version <= ? ORDER BY version DESC LIMIT 1")
+	stmt, err := conn.Prepare("SELECT version FROM kv.version_kv WHERE version <= ? ORDER BY version DESC")
 	if err != nil {
 		return false, err
 	}
