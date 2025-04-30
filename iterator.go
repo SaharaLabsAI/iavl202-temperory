@@ -306,6 +306,10 @@ func (l *LeafIterator) Close() error {
 }
 
 func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err error) {
+	if tree.immutable {
+		return tree.IteratorAt(tree.version, start, end, inclusive)
+	}
+
 	if tree.storeLatestLeaves {
 		leafItr := &LeafIterator{
 			sql:     tree.sql,
@@ -342,6 +346,10 @@ func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err
 }
 
 func (tree *Tree) ReverseIterator(start, end []byte) (itr Iterator, err error) {
+	if tree.immutable {
+		return tree.ReverseIteratorAt(tree.version, start, end)
+	}
+
 	if tree.storeLatestLeaves {
 		leafItr := &LeafIterator{
 			sql:     tree.sql,
@@ -458,14 +466,7 @@ func (i *KVIterator) Close() error {
 }
 
 func (tree *Tree) IteratorAt(version int64, start, end []byte, inclusive bool) (Iterator, error) {
-	hasVersion, err := tree.sql.hasAnyVersionKV(version)
-	if err != nil {
-		return nil, err
-	}
-	if !hasVersion {
-		return nil, fmt.Errorf("version %d key value not found", version)
-	}
-
+	var err error
 	kvItr := &KVIterator{
 		sql:     tree.sql,
 		start:   start,
@@ -489,14 +490,7 @@ func (tree *Tree) IteratorAt(version int64, start, end []byte, inclusive bool) (
 }
 
 func (tree *Tree) ReverseIteratorAt(version int64, start, end []byte) (Iterator, error) {
-	hasVersion, err := tree.sql.hasAnyVersionKV(version)
-	if err != nil {
-		return nil, err
-	}
-	if !hasVersion {
-		return nil, fmt.Errorf("version %d key value not found", version)
-	}
-
+	var err error
 	kvItr := &KVIterator{
 		sql:     tree.sql,
 		start:   start,

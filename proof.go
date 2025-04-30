@@ -21,7 +21,7 @@ var proofBufPool = &sync.Pool{
 }
 
 func (tree *Tree) GetProof(version int64, key []byte) (proof *ics23.CommitmentProof, err error) {
-	t, err := tree.GetImmutable(version)
+	t, err := tree.GetImmutableProvable(version)
 	if err != nil {
 		return nil, err
 	}

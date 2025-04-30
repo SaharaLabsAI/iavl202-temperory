@@ -309,6 +309,10 @@ func (tree *Tree) Get(key []byte) ([]byte, error) {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_get")
 	}
 
+	if tree.immutable {
+		return tree.sql.GetAt(tree.version, key)
+	}
+
 	var (
 		res []byte
 		err error
@@ -328,6 +332,15 @@ func (tree *Tree) Has(key []byte) (bool, error) {
 	if tree.metricsProxy != nil {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_has")
 	}
+
+	if tree.immutable {
+		val, err := tree.sql.GetAt(tree.version, key)
+		if err != nil {
+			return false, err
+		}
+		return val != nil, nil
+	}
+
 	var (
 		err error
 		val []byte
@@ -881,6 +894,41 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 		return nil, err
 	}
 
+	err = tree.sql.CheckRoot(version)
+	if err != nil {
+		return nil, err
+	}
+
+	imTree := &Tree{
+		version:            version,
+		immutable:          true,
+		sql:                sql,
+		sqlWriter:          nil,
+		writerCancel:       nil,
+		pool:               pool,
+		checkpoints:        &VersionRange{},
+		metrics:            tree.metrics,
+		maxWorkingSize:     tree.maxWorkingSize,
+		checkpointInterval: tree.checkpointInterval,
+		checkpointMemory:   tree.checkpointMemory,
+		storeLeafValues:    tree.storeLeafValues,
+		storeLatestLeaves:  tree.storeLatestLeaves,
+		heightFilter:       tree.heightFilter,
+		metricsProxy:       tree.metricsProxy,
+		evictionDepth:      tree.evictionDepth,
+		leafSequence:       leafSequenceStart,
+	}
+
+	return imTree, nil
+}
+
+func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
+	pool := NewNodePool()
+	sql, err := NewSqliteDb(pool, tree.sql.opts)
+	if err != nil {
+		return nil, err
+	}
+
 	imTree := &Tree{
 		sql:                sql,
 		sqlWriter:          nil,
@@ -899,7 +947,7 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 		leafSequence:       leafSequenceStart,
 	}
 
-	if err := imTree.LoadVersion(version); err != nil {
+	if err = imTree.LoadVersion(version); err != nil {
 		return nil, err
 	}
 
@@ -916,4 +964,8 @@ func (tree *Tree) VersionExists(version int64) (bool, error) {
 
 	previousVersion := checkpoints.FindPrevious(version)
 	return previousVersion > 0, nil
+}
+
+func (tree *Tree) GetAt(version int64, key []byte) ([]byte, error) {
+	return tree.sql.GetAt(version, key)
 }

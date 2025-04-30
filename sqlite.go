@@ -1202,7 +1202,7 @@ func DefaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	return defaultSqliteDbOptions(opts)
 }
 
-func (sql *SqliteDb) GetValue(version int64, key []byte) ([]byte, error) {
+func (sql *SqliteDb) GetAt(version int64, key []byte) ([]byte, error) {
 	if len(key) == 0 {
 		return nil, fmt.Errorf("get value with key length 0")
 	}
@@ -1213,7 +1213,7 @@ func (sql *SqliteDb) GetValue(version int64, key []byte) ([]byte, error) {
 	}
 
 	if sql.queryKV == nil {
-		sql.queryKV, err = conn.Prepare("SELECT value FROM kv.version_kv WHERE version <= ? AND key = ?")
+		sql.queryKV, err = conn.Prepare("SELECT value FROM kv.version_kv WHERE version <= ? AND key = ? ORDER BY version DESC LIMIT 1")
 		if err != nil {
 			return nil, err
 		}
@@ -1222,7 +1222,7 @@ func (sql *SqliteDb) GetValue(version int64, key []byte) ([]byte, error) {
 	if err = sql.queryKV.Bind(version, key); err != nil {
 		return nil, err
 	}
-	defer sql.queryKV.Reset()
+	defer sql.queryKV.Close()
 
 	hasRow, err := sql.queryKV.Step()
 	if err != nil {
@@ -1265,7 +1265,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 	switch {
 	case start == nil && end == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM kv.version_kv WHERE version <= ? ORDER BY key %s", suffix))
+			fmt.Sprintf("SELECT key, value FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM kv.version_kv WHERE version <= ? ORDER BY key %s) WHERE rn = 1;", suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1274,7 +1274,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 		}
 	case start == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM kv.version_kv WHERE version <= ? AND %s ORDER BY key %s", endKey, suffix))
+			fmt.Sprintf("SELECT key, value FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM kv.version_kv WHERE version <= ? AND %s ORDER BY key %s) WHERE rn = 1;", endKey, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1283,7 +1283,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 		}
 	case end == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM kv.version_kv WHERE version <= ? AND key >= ? ORDER BY key %s", suffix))
+			fmt.Sprintf("SELECT key, value FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM kv.version_kv WHERE version <= ? AND key >= ? ORDER BY key %s) WHERE rn = 1;", suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1292,7 +1292,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 		}
 	default:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM kv.version_kv WHERE version <= ? AND key >= ? AND %s ORDER BY key %s", endKey, suffix))
+			fmt.Sprintf("SELECT key, value FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM kv.version_kv WHERE version <= ? AND key >= ? AND %s ORDER BY key %s) WHERE rn = 1;", endKey, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1312,7 +1312,7 @@ func (sql *SqliteDb) hasAnyVersionKV(version int64) (bool, error) {
 		return false, err
 	}
 
-	stmt, err := conn.Prepare("SELECT version FROM kv.version_kv WHERE version = ? LIMIT 1")
+	stmt, err := conn.Prepare("SELECT version FROM kv.version_kv WHERE version <= ? ORDER BY version DESC LIMIT 1")
 	if err != nil {
 		return false, err
 	}
@@ -1323,4 +1323,30 @@ func (sql *SqliteDb) hasAnyVersionKV(version int64) (bool, error) {
 	}
 
 	return stmt.Step()
+}
+
+func (sql *SqliteDb) CheckRoot(version int64) error {
+	conn, err := sql.getReadConn()
+	if err != nil {
+		return err
+	}
+
+	rootQuery, err := conn.Prepare("SELECT * FROM root WHERE version = ?", version)
+	if err != nil {
+		return err
+	}
+
+	hasRow, err := rootQuery.Step()
+	if err != nil {
+		return err
+	}
+	if !hasRow {
+		return fmt.Errorf("root not found for version %d", version)
+	}
+
+	if err := rootQuery.Close(); err != nil {
+		return err
+	}
+
+	return nil
 }

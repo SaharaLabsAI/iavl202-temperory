@@ -131,7 +131,7 @@ func (tree *Tree) ExportVersion(version int64, order TraverseOrderType) (*Export
 		return tree.Export(order), nil
 	}
 
-	imTree, err := tree.GetImmutable(version)
+	imTree, err := tree.GetImmutableProvable(version)
 	if err != nil {
 		return nil, err
 	}
