@@ -1310,25 +1310,29 @@ func (sql *SqliteDb) hasAnyVersionKV(version int64) (bool, error) {
 }
 
 func (sql *SqliteDb) CheckRoot(version int64) error {
-	conn, err := sql.getReadConn()
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return err
 	}
 
-	rootQuery, err := conn.Prepare("SELECT * FROM root WHERE version = ?", version)
+	rootQuery, err := conn.Prepare("SELECT node_version FROM root WHERE version = ?", version)
 	if err != nil {
 		return err
 	}
 
 	hasRow, err := rootQuery.Step()
-	if err != nil {
-		return err
-	}
 	if !hasRow {
 		return fmt.Errorf("root not found for version %d", version)
 	}
+	if err != nil {
+		return err
+	}
 
 	if err := rootQuery.Close(); err != nil {
+		return err
+	}
+
+	if err := conn.Close(); err != nil {
 		return err
 	}
 
