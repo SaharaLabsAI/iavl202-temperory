@@ -111,6 +111,15 @@ func (tree *Tree) LoadVersion(version int64) (err error) {
 		return errors.New("sql is nil")
 	}
 
+	if tree.immutable {
+		if err = tree.sql.CheckRoot(version); err != nil {
+			return err
+		}
+
+		tree.version = version
+		return
+	}
+
 	tree.workingBytes = 0
 	tree.workingSize = 0
 
@@ -317,6 +326,7 @@ func (tree *Tree) Get(key []byte) ([]byte, error) {
 		res []byte
 		err error
 	)
+
 	if tree.storeLatestLeaves {
 		res, err = tree.sql.GetLatestLeaf(key)
 	} else {
@@ -325,6 +335,7 @@ func (tree *Tree) Get(key []byte) ([]byte, error) {
 		}
 		_, res, err = tree.root.get(tree, key)
 	}
+
 	return res, err
 }
 
