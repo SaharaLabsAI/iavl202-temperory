@@ -106,7 +106,11 @@ func (b *sqliteBatch) newKVBBatch() (err error) {
 	if err != nil {
 		return err
 	}
-	b.leafSince = time.Now()
+	err = b.sql.kvWrite.Exec("CREATE UNIQUE INDEX IF NOT EXISTS version_key_idx ON version_kv (key, version DESC);")
+	if err != nil {
+		return err
+	}
+	b.kvSince = time.Now()
 	return nil
 }
 

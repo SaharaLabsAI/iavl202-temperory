@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -76,6 +77,9 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	}
 	if opts.WalSize == 0 {
 		opts.WalSize = 1024 * 1024 * 100
+	}
+	if opts.CacheSize == 0 {
+		opts.CacheSize = 500 * 1024 * 1024
 	}
 	if opts.Metrics == nil {
 		opts.Metrics = metrics.NilMetrics{}
@@ -255,8 +259,8 @@ CREATE INDEX leaf_orphan_idx ON leaf_orphan (at);`)
 	if !hasRow {
 		err = sql.kvWrite.Exec(`
 CREATE TABLE version_kv (version int, key blob, value blob);
-CREATE INDEX version_idx ON version_kv (version);
-CREATE INDEX version_key_idx ON version_kv (version, key);`)
+CREATE INDEX version_idx ON version_kv (version DESC);
+CREATE INDEX version_key_idx ON version_kv (key, version DESC);`)
 		if err != nil {
 			return err
 		}
@@ -332,7 +336,19 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 }
 
 func (sql *SqliteDb) newReadConn() (*gosqlite.Conn, error) {
-	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
+	var (
+		conn *gosqlite.Conn
+		err  error
+	)
+
+	connArgs := sql.opts.ConnArgs
+	if !strings.Contains(sql.opts.ConnArgs, "mode=memory&cache=shared") {
+		sql.opts.ConnArgs = "mode=ro"
+	}
+
+	conn, err = gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
+	sql.opts.ConnArgs = connArgs
+
 	if err != nil {
 		return nil, err
 	}
@@ -345,6 +361,10 @@ func (sql *SqliteDb) newReadConn() (*gosqlite.Conn, error) {
 		return nil, err
 	}
 	err = conn.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", sql.opts.MmapSize))
+	if err != nil {
+		return nil, err
+	}
+	err = conn.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", sql.opts.CacheSize))
 	if err != nil {
 		return nil, err
 	}
@@ -1228,7 +1248,7 @@ func (sql *SqliteDb) GetAt(version int64, key []byte) ([]byte, error) {
 	}
 
 	if sql.queryKV == nil {
-		sql.queryKV, err = conn.Prepare("SELECT value FROM kv.version_kv WHERE version <= ? AND key = ? ORDER BY version DESC")
+		sql.queryKV, err = conn.Prepare("SELECT value FROM kv.version_kv WHERE version <= ? AND key = ? ORDER BY version DESC LIMIT 1")
 		if err != nil {
 			return nil, err
 		}
