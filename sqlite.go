@@ -268,7 +268,8 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	err = sql.treeWrite.Exec("PRAGMA synchronous=OFF;")
+	// err = sql.treeWrite.Exec("PRAGMA synchronous=OFF;")
+	err = sql.treeWrite.Exec("PRAGMA synchronous=NORMAL;")
 	if err != nil {
 		return err
 	}
@@ -282,7 +283,8 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	err = sql.leafWrite.Exec("PRAGMA synchronous=OFF;")
+	// err = sql.leafWrite.Exec("PRAGMA synchronous=OFF;")
+	err = sql.leafWrite.Exec("PRAGMA synchronous=NORMAL;")
 	if err != nil {
 		return err
 	}
