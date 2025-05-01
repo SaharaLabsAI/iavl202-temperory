@@ -206,10 +206,7 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 	}
 	saveLeaves := func(sig *saveSignal) {
 		res := &saveResult{}
-		_, kvErr := sig.batch.saveKVs()
-		leafCount, leafErr := sig.batch.saveLeaves()
-		res.n = leafCount
-		res.err = errors.Join(kvErr, leafErr)
+		res.n, res.err = sig.batch.saveLeaves()
 		if sig.batch.isCheckpoint() {
 			if err = w.sql.leafWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 				w.logger.Error("failed leaf wal_checkpoint", "error", err)
@@ -217,7 +214,6 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 		}
 		w.leafResult <- res
 	}
-	// TODO: prune kvs
 	for {
 		if pruneVersion != 0 {
 			select {

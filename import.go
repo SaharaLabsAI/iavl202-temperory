@@ -113,10 +113,9 @@ func (i *Importer) writeNode(node *Node) error {
 		result := make(chan error)
 		i.inflightCommit = result
 		go func() {
-			_, kvErr := i.batch.saveKVs()
 			_, leafErr := i.batch.saveLeaves()
 			_, branchErr := i.batch.saveBranches()
-			result <- errors.Join(kvErr, leafErr, branchErr)
+			result <- errors.Join(leafErr, branchErr)
 		}()
 
 		err = i.waitBatch()
@@ -244,10 +243,6 @@ func (i *Importer) Commit() error {
 		return err
 	}
 	_, err = i.batch.saveBranches()
-	if err != nil {
-		return err
-	}
-	_, err = i.batch.saveKVs()
 	if err != nil {
 		return err
 	}

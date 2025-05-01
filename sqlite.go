@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/eatonphil/gosqlite"
 	api "github.com/kocubinski/costor-api"
 
+	encoding "github.com/cosmos/iavl/v2/internal"
 	"github.com/cosmos/iavl/v2/metrics"
 )
 
@@ -45,7 +47,6 @@ type SqliteDb struct {
 
 	// Another database for version key value, because of current node serialize method, we cannot implement
 	// base on leaf database.
-	kvWrite     *gosqlite.Conn
 	queryKV     *gosqlite.Stmt
 	kvItrIdx    int
 	kvIterators map[int]*gosqlite.Stmt
@@ -229,7 +230,7 @@ CREATE TABLE root (
 	if !hasRow {
 		err = sql.leafWrite.Exec(`
 CREATE TABLE latest (key blob, value blob, PRIMARY KEY (key));
-CREATE TABLE leaf (version int, sequence int, bytes blob, orphaned bool);
+CREATE TABLE leaf (version int, sequence int, key blob, bytes blob, orphaned bool);
 CREATE TABLE leaf_delete (version int, sequence int, key blob, PRIMARY KEY (version, sequence));
 CREATE TABLE leaf_orphan (version int, sequence int, at int);
 CREATE INDEX leaf_orphan_idx ON leaf_orphan (at);`)
@@ -244,34 +245,6 @@ CREATE INDEX leaf_orphan_idx ON leaf_orphan (at);`)
 			return err
 		}
 		err = sql.leafWrite.Exec("PRAGMA journal_mode=WAL;")
-		if err != nil {
-			return err
-		}
-	}
-	if err = q.Close(); err != nil {
-		return err
-	}
-
-	q, err = sql.kvWrite.Prepare("SELECT name from sqlite_master WHERE type='table' AND name='version_kv'")
-	if err != nil {
-		return err
-	}
-	if !hasRow {
-		err = sql.kvWrite.Exec(`
-CREATE TABLE version_kv (version int, key blob, value blob);
-CREATE INDEX version_idx ON version_kv (version DESC);
-CREATE INDEX version_key_idx ON version_kv (key, version DESC);`)
-		if err != nil {
-			return err
-		}
-
-		pageSize := os.Getpagesize()
-		sql.logger.Info(fmt.Sprintf("setting page size to %s", humanize.Bytes(uint64(pageSize))))
-		err = sql.kvWrite.Exec(fmt.Sprintf("PRAGMA page_size=%d; VACUUM;", pageSize))
-		if err != nil {
-			return err
-		}
-		err = sql.kvWrite.Exec("PRAGMA journal_mode=WAL;")
 		if err != nil {
 			return err
 		}
@@ -318,20 +291,6 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	sql.kvWrite, err = gosqlite.Open(sql.opts.kvConnectionString(), sql.opts.Mode)
-	if err != nil {
-		return err
-	}
-
-	err = sql.kvWrite.Exec("PRAGMA synchronous=OFF;")
-	if err != nil {
-		return err
-	}
-
-	if err = sql.kvWrite.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", sql.opts.walPages)); err != nil {
-		return err
-	}
-
 	return err
 }
 
@@ -353,10 +312,6 @@ func (sql *SqliteDb) newReadConn() (*gosqlite.Conn, error) {
 		return nil, err
 	}
 	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS changelog;", sql.opts.leafConnectionString()))
-	if err != nil {
-		return nil, err
-	}
-	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS kv;", sql.opts.kvConnectionString()))
 	if err != nil {
 		return nil, err
 	}
@@ -508,9 +463,6 @@ func (sql *SqliteDb) Close() error {
 		return err
 	}
 
-	if err := sql.kvWrite.Close(); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -880,9 +832,6 @@ func (sql *SqliteDb) Revert(version int) error {
 	if err := sql.leafWrite.Exec("DELETE FROM leaf_orphan WHERE at > ?", version); err != nil {
 		return err
 	}
-	if err := sql.kvWrite.Exec("DELETE FROM version_kv WHERE version > ?", version); err != nil {
-		return err
-	}
 	if err := sql.treeWrite.Exec("DELETE FROM root WHERE version > ?", version); err != nil {
 		return err
 	}
@@ -1248,7 +1197,7 @@ func (sql *SqliteDb) GetAt(version int64, key []byte) ([]byte, error) {
 	}
 
 	if sql.queryKV == nil {
-		sql.queryKV, err = conn.Prepare("SELECT value FROM kv.version_kv WHERE version <= ? AND key = ? ORDER BY version DESC LIMIT 1")
+		sql.queryKV, err = conn.Prepare("SELECT bytes FROM changelog.leaf WHERE version <= ? AND key = ? ORDER BY version DESC LIMIT 1")
 		if err != nil {
 			return nil, err
 		}
@@ -1267,13 +1216,13 @@ func (sql *SqliteDb) GetAt(version int64, key []byte) ([]byte, error) {
 		return nil, nil
 	}
 
-	var val []byte
-	err = sql.queryKV.Scan(&val)
+	var nodeBz gosqlite.RawBytes
+	err = sql.queryKV.Scan(&nodeBz)
 	if err != nil {
 		return nil, err
 	}
 
-	return val, nil
+	return extractValue(nodeBz)
 }
 
 func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascending, inclusive bool) (stmt *gosqlite.Stmt, idx int, err error) {
@@ -1300,7 +1249,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 	switch {
 	case start == nil && end == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM kv.version_kv WHERE version <= ? ORDER BY key %s) WHERE rn = 1;", suffix))
+			fmt.Sprintf("SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE version <= ? ORDER BY key %s) WHERE rn = 1;", suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1309,7 +1258,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 		}
 	case start == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM kv.version_kv WHERE version <= ? AND %s ORDER BY key %s) WHERE rn = 1;", endKey, suffix))
+			fmt.Sprintf("SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE version <= ? AND %s ORDER BY key %s) WHERE rn = 1;", endKey, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1318,7 +1267,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 		}
 	case end == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM kv.version_kv WHERE version <= ? AND key >= ? ORDER BY key %s) WHERE rn = 1;", suffix))
+			fmt.Sprintf("SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE version <= ? AND key >= ? ORDER BY key %s) WHERE rn = 1;", suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1327,7 +1276,7 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 		}
 	default:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM kv.version_kv WHERE version <= ? AND key >= ? AND %s ORDER BY key %s) WHERE rn = 1;", endKey, suffix))
+			fmt.Sprintf("SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE version <= ? AND key >= ? AND %s ORDER BY key %s) WHERE rn = 1;", endKey, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -1347,7 +1296,7 @@ func (sql *SqliteDb) hasAnyVersionKV(version int64) (bool, error) {
 		return false, err
 	}
 
-	stmt, err := conn.Prepare("SELECT version FROM kv.version_kv WHERE version <= ? ORDER BY version DESC")
+	stmt, err := conn.Prepare("SELECT version FROM changelog.leaf WHERE version <= ? ORDER BY version DESC LIMIT 1")
 	if err != nil {
 		return false, err
 	}
@@ -1384,4 +1333,41 @@ func (sql *SqliteDb) CheckRoot(version int64) error {
 	}
 
 	return nil
+}
+
+func extractValue(buf []byte) ([]byte, error) {
+	// Read node header (height, size, version, key).
+	height, n, err := encoding.DecodeVarint(buf)
+	if err != nil {
+		return nil, fmt.Errorf("decoding leaf.height, %w", err)
+	}
+	buf = buf[n:]
+	if height < int64(math.MinInt8) || height > int64(math.MaxInt8) {
+		return nil, errors.New("invalid height, must be int8")
+	}
+
+	_, n, err = encoding.DecodeVarint(buf)
+	if err != nil {
+		return nil, fmt.Errorf("decoding leaf.size, %w", err)
+	}
+	buf = buf[n:]
+
+	_, n, err = encoding.DecodeBytes(buf)
+	if err != nil {
+		return nil, fmt.Errorf("decoding leaf.key, %w", err)
+	}
+	buf = buf[n:]
+
+	_, n, err = encoding.DecodeBytes(buf)
+	if err != nil {
+		return nil, fmt.Errorf("decoding leaf.hash, %w", err)
+	}
+	buf = buf[n:]
+
+	val, _, cause := encoding.DecodeBytes(buf)
+	if cause != nil {
+		return nil, fmt.Errorf("decoding leaf.value, %w", cause)
+	}
+
+	return val, nil
 }

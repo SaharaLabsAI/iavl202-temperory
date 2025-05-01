@@ -432,7 +432,17 @@ func (i *KVIterator) Next() {
 		return
 	}
 
-	if err = i.itrStmt.Scan(&i.key, &i.value); err != nil {
+	var nodeBz gosqlite.RawBytes
+	if err = i.itrStmt.Scan(&i.key, &nodeBz); err != nil {
+		closeErr := i.Close()
+		if closeErr != nil {
+			i.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
+		}
+		return
+	}
+
+	i.value, err = extractValue(nodeBz)
+	if err != nil {
 		closeErr := i.Close()
 		if closeErr != nil {
 			i.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
