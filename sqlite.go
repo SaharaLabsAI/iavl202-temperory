@@ -513,7 +513,7 @@ func (sql *SqliteDb) SaveRoot(version int64, node *Node) error {
 			version, node.nodeKey.Version(), int(node.nodeKey.Sequence()), bz)
 	}
 	// for an empty root a sentinel is saved
-	return sql.treeWrite.Exec("INSERT OR REPLACE INTO root(version) VALUES (?, ?)", version)
+	return sql.treeWrite.Exec("INSERT OR REPLACE INTO root(version) VALUES (?)", version)
 }
 
 func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
