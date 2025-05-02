@@ -216,9 +216,11 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 	}
 
 	// otherwise accumulate the branch node
-	if node.dirty {
-		tree.branches = append(tree.branches, node)
+	if !node.dirty {
+		return
 	}
+
+	tree.branches = append(tree.branches, node)
 
 	// if the node is missing a hash then it's children have already been loaded above.
 	// if the node has a hash then traverse the dirty path.
