@@ -19,6 +19,7 @@ import (
 )
 
 const defaultSQLitePath = "/tmp/iavl-v2"
+const defaultShardID = 1
 
 type SqliteDbOptions struct {
 	Path       string
@@ -216,6 +217,17 @@ CREATE TABLE root (
 			return err
 		}
 		err = sql.treeWrite.Exec("PRAGMA journal_mode=WAL;")
+		if err != nil {
+			return err
+		}
+
+		sql.logger.Info(fmt.Sprintf("creating shard %d", defaultShardID))
+		err := sql.treeWrite.Exec(fmt.Sprintf("CREATE TABLE tree_%d (version int, sequence int, bytes blob, orphaned bool);", defaultShardID))
+		if err != nil {
+			return err
+		}
+
+		err = sql.shards.Add(defaultShardID)
 		if err != nil {
 			return err
 		}
@@ -469,24 +481,26 @@ func (sql *SqliteDb) Close() error {
 	return nil
 }
 
-func (sql *SqliteDb) nextShard(version int64) (int64, error) {
-	if !sql.opts.ShardTrees {
-		switch sql.shards.Len() {
-		case 0:
-			break
-		case 1:
-			return sql.shards.Last(), nil
-		default:
-			return -1, fmt.Errorf("sharding is disabled but found shards; shards=%v", sql.shards.versions)
-		}
-	}
+func (sql *SqliteDb) nextShard(_ int64) (int64, error) {
+	return defaultShardID, nil
 
-	sql.logger.Info(fmt.Sprintf("creating shard %d", version))
-	err := sql.treeWrite.Exec(fmt.Sprintf("CREATE TABLE tree_%d (version int, sequence int, bytes blob, orphaned bool);", version))
-	if err != nil {
-		return version, err
-	}
-	return version, sql.shards.Add(version)
+	// if !sql.opts.ShardTrees {
+	// 	switch sql.shards.Len() {
+	// 	case 0:
+	// 		break
+	// 	case 1:
+	// 		return sql.shards.Last(), nil
+	// 	default:
+	// 		return -1, fmt.Errorf("sharding is disabled but found shards; shards=%v", sql.shards.versions)
+	// 	}
+	// }
+	//
+	// sql.logger.Info(fmt.Sprintf("creating shard %d", version))
+	// err := sql.treeWrite.Exec(fmt.Sprintf("CREATE TABLE tree_%d (version int, sequence int, bytes blob, orphaned bool);", version))
+	// if err != nil {
+	// 	return version, err
+	// }
+	// return version, sql.shards.Add(version)
 }
 
 func (sql *SqliteDb) SaveRoot(version int64, node *Node) error {
@@ -551,18 +565,21 @@ func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
 	return root, nil
 }
 
-func (sql *SqliteDb) getShard(version int64) (int64, error) {
-	if !sql.opts.ShardTrees {
-		if sql.shards.Len() != 1 {
-			return -1, fmt.Errorf("expected a single shard; path=%s", sql.opts.Path)
-		}
-		return sql.shards.Last(), nil
-	}
-	v := sql.shards.FindMemoized(version)
-	if v == -1 {
-		return -1, fmt.Errorf("version %d is after the first shard; shards=%v", version, sql.shards.versions)
-	}
-	return v, nil
+func (sql *SqliteDb) getShard(_ int64) (int64, error) {
+	// Disable shard and always return 1
+	return defaultShardID, nil
+
+	// if !sql.opts.ShardTrees {
+	// 	if sql.shards.Len() != 1 {
+	// 		return -1, fmt.Errorf("expected a single shard; path=%s", sql.opts.Path)
+	// 	}
+	// 	return sql.shards.Last(), nil
+	// }
+	// v := sql.shards.FindMemoized(version)
+	// if v == -1 {
+	// 	return -1, fmt.Errorf("version %d is after the first shard; shards=%v", version, sql.shards.versions)
+	// }
+	// return v, nil
 }
 
 func (sql *SqliteDb) getShardQuery(version int64) (*gosqlite.Stmt, error) {
