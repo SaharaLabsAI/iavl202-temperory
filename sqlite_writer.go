@@ -123,9 +123,9 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 			return err
 		}
 		w.logger.Debug(fmt.Sprintf("commit leaf prune count=%s", humanize.Comma(pruneCount)))
-		if err = w.sql.leafWrite.Exec("PRAGMA wal_checkpoint(RESTART)"); err != nil {
-			return fmt.Errorf("failed to checkpoint; %w", err)
-		}
+		// if err = w.sql.leafWrite.Exec("PRAGMA wal_checkpoint(RESTART)"); err != nil {
+		// 	return fmt.Errorf("failed to checkpoint; %w", err)
+		// }
 
 		if err = deleteLeaf.Close(); err != nil {
 			return err
@@ -194,9 +194,9 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 	saveLeaves := func(sig *saveSignal) {
 		res := &saveResult{}
 		res.n, res.err = sig.batch.saveLeaves()
-		if err = w.sql.leafWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-			w.logger.Error("failed leaf wal_checkpoint", "error", err)
-		}
+		// if err = w.sql.leafWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		// 	w.logger.Error("failed leaf wal_checkpoint", "error", err)
+		// }
 		w.leafResult <- res
 	}
 	for {
@@ -281,9 +281,9 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 			return err
 		}
 		w.logger.Debug(fmt.Sprintf("commit tree prune count=%s", humanize.Comma(pruneCount)))
-		if err = w.sql.treeWrite.Exec("PRAGMA wal_checkpoint(RESTART)"); err != nil {
-			return fmt.Errorf("failed to checkpoint; %w", err)
-		}
+		// if err = w.sql.treeWrite.Exec("PRAGMA wal_checkpoint(RESTART)"); err != nil {
+		// 	return fmt.Errorf("failed to checkpoint; %w", err)
+		// }
 		return nil
 	}
 	saveTree := func(sig *saveSignal) {
@@ -295,9 +295,9 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 				res.err = fmt.Errorf("failed to save root path=%s version=%d: %w", w.sql.opts.Path, sig.version, err)
 			}
 		}
-		if err := w.sql.treeWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-			res.err = fmt.Errorf("failed tree checkpoint; %w", err)
-		}
+		// if err := w.sql.treeWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		// 	res.err = fmt.Errorf("failed tree checkpoint; %w", err)
+		// }
 		w.treeResult <- res
 	}
 	startPrune := func(startPruningVersion int64) error {
