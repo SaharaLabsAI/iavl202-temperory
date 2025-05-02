@@ -5,14 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"runtime"
+	"slices"
 	"sync/atomic"
 	"time"
 
+	"github.com/dustin/go-humanize"
+
 	"github.com/cosmos/iavl/v2/metrics"
 	"github.com/cosmos/iavl/v2/testutil"
-	"github.com/dustin/go-humanize"
 )
 
 // MultiTree encapsulates multiple IAVL trees, each with its own "store key" in the context of the Cosmos SDK.
@@ -22,10 +23,9 @@ type MultiTree struct {
 
 	Trees map[string]*Tree
 
-	pool             *NodePool
-	rootPath         string
-	treeOpts         TreeOptions
-	shouldCheckpoint bool
+	pool     *NodePool
+	rootPath string
+	treeOpts TreeOptions
 
 	doneCh  chan saveVersionResult
 	errorCh chan error
@@ -173,7 +173,6 @@ func (mt *MultiTree) SaveVersionConcurrently() ([]byte, int64, error) {
 	for _, tree := range mt.Trees {
 		treeCount++
 		go func(t *Tree) {
-			t.shouldCheckpoint = mt.shouldCheckpoint
 			h, v, err := t.SaveVersion()
 			workingSize.Add(t.workingSize)
 			workingBytes.Add(t.workingBytes)
@@ -201,7 +200,6 @@ func (mt *MultiTree) SaveVersionConcurrently() ([]byte, int64, error) {
 			version = result.version
 		}
 	}
-	mt.shouldCheckpoint = false
 
 	if mt.treeOpts.MetricsProxy != nil {
 		// bz := workingBytes.Load()
@@ -210,10 +208,6 @@ func (mt *MultiTree) SaveVersionConcurrently() ([]byte, int64, error) {
 		// 	version, humanize.IBytes(bz), humanize.Comma(sz), humanize.IBytes(mt.treeOpts.CheckpointMemory))
 		mt.treeOpts.MetricsProxy.SetGauge(float32(workingBytes.Load()), "iavl_v2", "working_bytes")
 		mt.treeOpts.MetricsProxy.SetGauge(float32(workingSize.Load()), "iavl_v2", "working_size")
-	}
-
-	if mt.treeOpts.CheckpointMemory > 0 && workingBytes.Load() >= mt.treeOpts.CheckpointMemory {
-		mt.shouldCheckpoint = true
 	}
 
 	return mt.Hash(), version, errors.Join(errs...)

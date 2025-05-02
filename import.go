@@ -42,10 +42,12 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 	if version < 0 {
 		return nil, errors.New("imported version cannot be negative")
 	}
-	if versions, err := tree.sql.loadCheckpointRange(); err != nil {
+	versionExists, err := tree.sql.latestRoot()
+	if err != nil {
 		return nil, err
-	} else if versions.Len() > 0 {
-		return nil, fmt.Errorf("found versions %v, must be empty", versions)
+	}
+	if versionExists > 0 {
+		return nil, fmt.Errorf("found version %v, must be empty", versionExists)
 	}
 
 	// NOTE: Must turn off heightFilter, otherwise imported tree root may not be consistent
@@ -216,7 +218,7 @@ func (i *Importer) Commit() error {
 	switch len(i.stack) {
 	case 0:
 		// Should handle tree.root == nil special case
-		if err := i.tree.sql.SaveRoot(i.version, nil, true); err != nil {
+		if err := i.tree.sql.SaveRoot(i.version, nil); err != nil {
 			return err
 		}
 		i.tree.root = nil
@@ -230,7 +232,7 @@ func (i *Importer) Commit() error {
 		if err := i.writeNode(n); err != nil {
 			return err
 		}
-		if err := i.tree.sql.SaveRoot(i.version, n, true); err != nil {
+		if err := i.tree.sql.SaveRoot(i.version, n); err != nil {
 			return err
 		}
 		i.tree.root = n

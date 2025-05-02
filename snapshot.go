@@ -74,7 +74,6 @@ func (sql *SqliteDb) Snapshot(ctx context.Context, tree *Tree) error {
 
 type SnapshotOptions struct {
 	StoreLeafValues   bool
-	WriteCheckpoint   bool
 	DontWriteSnapshot bool
 	TraverseOrder     TraverseOrderType
 }
@@ -245,10 +244,8 @@ func (sql *SqliteDb) WriteSnapshot(
 		log:       sql.logger,
 		writeTree: true,
 	}
-	if opts.WriteCheckpoint {
-		if _, err := sql.nextShard(version); err != nil {
-			return nil, err
-		}
+	if _, err := sql.nextShard(version); err != nil {
+		return nil, err
 	}
 	err := snap.sql.leafWrite.Exec(
 		fmt.Sprintf(`CREATE TABLE snapshot_%d (ordinal int, version int, sequence int, bytes blob);`, version))
@@ -281,7 +278,7 @@ func (sql *SqliteDb) WriteSnapshot(
 		versions = append(versions, v)
 	}
 
-	if err = sql.SaveRoot(version, root, true); err != nil {
+	if err = sql.SaveRoot(version, root); err != nil {
 		return nil, err
 	}
 

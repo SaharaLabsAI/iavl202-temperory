@@ -7,13 +7,14 @@ import (
 	"runtime/pprof"
 	"time"
 
-	"github.com/cosmos/iavl/v2"
-	"github.com/cosmos/iavl/v2/metrics"
-	"github.com/cosmos/iavl/v2/testutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
+
+	"github.com/cosmos/iavl/v2"
+	"github.com/cosmos/iavl/v2/metrics"
+	"github.com/cosmos/iavl/v2/testutil"
 )
 
 func Command() *cobra.Command {
@@ -60,7 +61,6 @@ $ go run ./cmd snapshot --db /tmp/iavl-v2 --version 1
 				}()
 			}
 			treeOpts := iavl.DefaultTreeOptions()
-			treeOpts.CheckpointInterval = 80
 			treeOpts.StateStorage = true
 			treeOpts.HeightFilter = 1
 			treeOpts.EvictionDepth = 22

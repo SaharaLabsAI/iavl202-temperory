@@ -33,19 +33,14 @@ type Tree struct {
 	writerCancel context.CancelFunc
 	pool         *NodePool
 
-	checkpoints      *VersionRange
-	shouldCheckpoint bool
-
 	// options
-	maxWorkingSize     uint64
-	workingBytes       uint64
-	checkpointInterval int64
-	checkpointMemory   uint64
-	workingSize        int64
-	storeLeafValues    bool
-	storeLatestLeaves  bool
-	heightFilter       int8
-	metricsProxy       metrics.Proxy
+	maxWorkingSize    uint64
+	workingBytes      uint64
+	workingSize       int64
+	storeLeafValues   bool
+	storeLatestLeaves bool
+	heightFilter      int8
+	metricsProxy      metrics.Proxy
 
 	// state
 	branches       []*Node
@@ -63,43 +58,37 @@ type Tree struct {
 }
 
 type TreeOptions struct {
-	CheckpointInterval int64
-	CheckpointMemory   uint64
-	StateStorage       bool
-	HeightFilter       int8
-	EvictionDepth      int8
-	MetricsProxy       metrics.Proxy
+	StateStorage  bool
+	HeightFilter  int8
+	EvictionDepth int8
+	MetricsProxy  metrics.Proxy
 }
 
 func DefaultTreeOptions() TreeOptions {
 	return TreeOptions{
-		CheckpointInterval: 1000,
-		StateStorage:       true,
-		HeightFilter:       1,
-		EvictionDepth:      -1,
-		MetricsProxy:       &metrics.NilMetrics{},
+		StateStorage:  true,
+		HeightFilter:  1,
+		EvictionDepth: -1,
+		MetricsProxy:  &metrics.NilMetrics{},
 	}
 }
 
 func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 	ctx, cancel := context.WithCancel(context.Background())
 	tree := &Tree{
-		sql:                sql,
-		sqlWriter:          sql.newSQLWriter(),
-		writerCancel:       cancel,
-		pool:               pool,
-		checkpoints:        &VersionRange{},
-		metrics:            opts.MetricsProxy,
-		maxWorkingSize:     1.5 * 1024 * 1024 * 1024,
-		checkpointInterval: opts.CheckpointInterval,
-		checkpointMemory:   opts.CheckpointMemory,
-		storeLeafValues:    opts.StateStorage,
-		storeLatestLeaves:  false,
-		heightFilter:       opts.HeightFilter,
-		metricsProxy:       opts.MetricsProxy,
-		evictionDepth:      opts.EvictionDepth,
-		leafSequence:       leafSequenceStart,
-		immutable:          false,
+		sql:               sql,
+		sqlWriter:         sql.newSQLWriter(),
+		writerCancel:      cancel,
+		pool:              pool,
+		metrics:           opts.MetricsProxy,
+		maxWorkingSize:    1.5 * 1024 * 1024 * 1024,
+		storeLeafValues:   opts.StateStorage,
+		storeLatestLeaves: false,
+		heightFilter:      opts.HeightFilter,
+		metricsProxy:      opts.MetricsProxy,
+		evictionDepth:     opts.EvictionDepth,
+		leafSequence:      leafSequenceStart,
+		immutable:         false,
 	}
 
 	tree.sqlWriter.start(ctx)
@@ -111,51 +100,29 @@ func (tree *Tree) LoadVersion(version int64) (err error) {
 		return errors.New("sql is nil")
 	}
 
+	if version == 0 {
+		return nil
+	}
+
+	tree.version = version
 	if tree.immutable {
-		if err = tree.sql.CheckRoot(version); err != nil {
+		exists, err := tree.sql.HasRoot(version)
+		if err != nil {
 			return err
 		}
+		if !exists {
+			return fmt.Errorf("root not found for version %d", version)
+		}
 
-		tree.version = version
-		return
+		return nil
 	}
 
 	tree.workingBytes = 0
 	tree.workingSize = 0
 
-	tree.checkpoints, err = tree.sql.loadCheckpointRange()
-	if err != nil {
-		return err
-	}
-
-	previousVersion := tree.checkpoints.FindPrevious(version)
-	if previousVersion > 0 {
-		tree.version = previousVersion
-	}
-
-	if tree.version == 0 {
-		return nil
-	}
-
 	tree.root, err = tree.sql.LoadRoot(tree.version)
 	if err != nil {
 		return err
-	}
-	if version > tree.version {
-		var targetHash []byte
-		targetRoot, err := tree.sql.LoadRoot(version)
-		if err != nil {
-			return err
-		}
-		if targetRoot == nil {
-			targetHash = emptyHash
-		} else {
-			targetHash = targetRoot.hash
-		}
-
-		if err = tree.replayChangelog(version, targetHash); err != nil {
-			return err
-		}
 	}
 
 	return nil
@@ -171,10 +138,6 @@ func (tree *Tree) LoadSnapshot(version int64, traverseOrder TraverseOrderType) (
 		return fmt.Errorf("requested %d found snapshot %d, replay not yet supported", version, v)
 	}
 	tree.version = v
-	tree.checkpoints, err = tree.sql.loadCheckpointRange()
-	if err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -194,11 +157,6 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 		return nil, 0, err
 	}
 
-	if !tree.shouldCheckpoint {
-		tree.shouldCheckpoint = tree.version == 1 ||
-			(tree.checkpointInterval > 0 && tree.version-tree.checkpoints.Last() >= tree.checkpointInterval) ||
-			(tree.checkpointMemory > 0 && tree.workingBytes >= tree.checkpointMemory)
-	}
 	rootHash := tree.computeHash()
 
 	err := tree.sqlWriter.saveTree(tree)
@@ -206,18 +164,11 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 		return nil, tree.version, err
 	}
 
-	if tree.shouldCheckpoint {
-		tree.branchOrphans = nil
-		if err = tree.checkpoints.Add(tree.version); err != nil {
-			return nil, tree.version, err
-		}
+	tree.branchOrphans = nil
 
-		// if we've checkpointed without loading any tree node reads this means this was the first checkpoint.
-		// shard queries will not be loaded. initialize them now.
-		if tree.shouldCheckpoint && tree.sql.readConn == nil {
-			if err := tree.sql.ResetShardQueries(); err != nil {
-				return nil, tree.version, err
-			}
+	if tree.sql.readConn == nil {
+		if err := tree.sql.ResetShardQueries(); err != nil {
+			return nil, tree.version, err
 		}
 	}
 
@@ -225,7 +176,6 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.leaves = nil
 	tree.branches = nil
 	tree.deletes = nil
-	tree.shouldCheckpoint = false
 
 	return rootHash, tree.version, nil
 }
@@ -246,6 +196,7 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 	if node == nil {
 		panic(fmt.Sprintf("node is nil; sql.path=%s", tree.sql.opts.Path))
 	}
+
 	if node.isLeaf() {
 		// new leaves are written every version
 		if node.nodeKey.Version() == tree.version {
@@ -264,24 +215,19 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 		tree.deepHash(node.right(tree), depth+1)
 	}
 
-	if !tree.shouldCheckpoint {
-		// when not checkpointing, end recursion at a node with a hash (node.version < tree.version)
-		if node.hash != nil {
-			return
-		}
-	} else {
-		// otherwise accumulate the branch node for checkpointing
+	// otherwise accumulate the branch node
+	if node.dirty {
 		tree.branches = append(tree.branches, node)
+	}
 
-		// if the node is missing a hash then it's children have already been loaded above.
-		// if the node has a hash then traverse the dirty path.
-		if node.hash != nil {
-			if node.leftNode != nil {
-				tree.deepHash(node.leftNode, depth+1)
-			}
-			if node.rightNode != nil {
-				tree.deepHash(node.rightNode, depth+1)
-			}
+	// if the node is missing a hash then it's children have already been loaded above.
+	// if the node has a hash then traverse the dirty path.
+	if node.hash != nil {
+		if node.leftNode != nil {
+			tree.deepHash(node.leftNode, depth+1)
+		}
+		if node.rightNode != nil {
+			tree.deepHash(node.rightNode, depth+1)
 		}
 	}
 
@@ -305,11 +251,9 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 		}
 	}
 
-	// finally, if checkpointing, remove node's children from memory if we're at the eviction height
-	if tree.shouldCheckpoint {
-		if depth >= tree.evictionDepth {
-			node.evictChildren()
-		}
+	// finally, remove node's children from memory if we're at the eviction height
+	if depth >= tree.evictionDepth {
+		node.evictChildren()
 	}
 }
 
@@ -674,7 +618,7 @@ func (tree *Tree) addOrphan(node *Node) {
 	if node.hash == nil {
 		return
 	}
-	if !node.isLeaf() && node.nodeKey.Version() <= tree.checkpoints.Last() {
+	if !node.isLeaf() {
 		tree.branchOrphans = append(tree.branchOrphans, node.nodeKey)
 	} else if node.isLeaf() && !node.dirty {
 		tree.leafOrphans = append(tree.leafOrphans, node.nodeKey)
@@ -752,17 +696,13 @@ func (tree *Tree) replayChangelog(toVersion int64, targetHash []byte) error {
 }
 
 func (tree *Tree) DeleteVersionsTo(toVersion int64) error {
-	tree.sqlWriter.treePruneCh <- &pruneSignal{pruneVersion: toVersion, checkpoints: *tree.checkpoints}
-	tree.sqlWriter.leafPruneCh <- &pruneSignal{pruneVersion: toVersion, checkpoints: *tree.checkpoints}
+	tree.sqlWriter.treePruneCh <- &pruneSignal{pruneVersion: toVersion}
+	tree.sqlWriter.leafPruneCh <- &pruneSignal{pruneVersion: toVersion}
 	return nil
 }
 
 func (tree *Tree) WorkingBytes() uint64 {
 	return tree.workingBytes
-}
-
-func (tree *Tree) SetShouldCheckpoint() {
-	tree.shouldCheckpoint = true
 }
 
 func (tree *Tree) GetWithIndex(key []byte) (int64, []byte, error) {
@@ -812,7 +752,6 @@ func (tree *Tree) SetInitialVersion(version int64) error {
 	var err error
 
 	tree.version = version - 1
-	tree.checkpoints, err = tree.sql.loadCheckpointRange()
 
 	return err
 }
@@ -905,29 +844,29 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 		return nil, err
 	}
 
-	err = tree.sql.CheckRoot(version)
+	exists, err := tree.sql.HasRoot(version)
 	if err != nil {
 		return nil, err
 	}
+	if !exists {
+		return nil, fmt.Errorf("root not found for version %d", version)
+	}
 
 	imTree := &Tree{
-		version:            version,
-		immutable:          true,
-		sql:                sql,
-		sqlWriter:          nil,
-		writerCancel:       nil,
-		pool:               pool,
-		checkpoints:        &VersionRange{},
-		metrics:            tree.metrics,
-		maxWorkingSize:     tree.maxWorkingSize,
-		checkpointInterval: tree.checkpointInterval,
-		checkpointMemory:   tree.checkpointMemory,
-		storeLeafValues:    tree.storeLeafValues,
-		storeLatestLeaves:  tree.storeLatestLeaves,
-		heightFilter:       tree.heightFilter,
-		metricsProxy:       tree.metricsProxy,
-		evictionDepth:      tree.evictionDepth,
-		leafSequence:       leafSequenceStart,
+		version:           version,
+		immutable:         true,
+		sql:               sql,
+		sqlWriter:         nil,
+		writerCancel:      nil,
+		pool:              pool,
+		metrics:           tree.metrics,
+		maxWorkingSize:    tree.maxWorkingSize,
+		storeLeafValues:   tree.storeLeafValues,
+		storeLatestLeaves: tree.storeLatestLeaves,
+		heightFilter:      tree.heightFilter,
+		metricsProxy:      tree.metricsProxy,
+		evictionDepth:     tree.evictionDepth,
+		leafSequence:      leafSequenceStart,
 	}
 
 	return imTree, nil
@@ -941,21 +880,18 @@ func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
 	}
 
 	imTree := &Tree{
-		sql:                sql,
-		sqlWriter:          nil,
-		writerCancel:       nil,
-		pool:               pool,
-		checkpoints:        &VersionRange{},
-		metrics:            tree.metrics,
-		maxWorkingSize:     tree.maxWorkingSize,
-		checkpointInterval: tree.checkpointInterval,
-		checkpointMemory:   tree.checkpointMemory,
-		storeLeafValues:    tree.storeLeafValues,
-		storeLatestLeaves:  tree.storeLatestLeaves,
-		heightFilter:       tree.heightFilter,
-		metricsProxy:       tree.metricsProxy,
-		evictionDepth:      tree.evictionDepth,
-		leafSequence:       leafSequenceStart,
+		sql:               sql,
+		sqlWriter:         nil,
+		writerCancel:      nil,
+		pool:              pool,
+		metrics:           tree.metrics,
+		maxWorkingSize:    tree.maxWorkingSize,
+		storeLeafValues:   tree.storeLeafValues,
+		storeLatestLeaves: tree.storeLatestLeaves,
+		heightFilter:      tree.heightFilter,
+		metricsProxy:      tree.metricsProxy,
+		evictionDepth:     tree.evictionDepth,
+		leafSequence:      leafSequenceStart,
 	}
 
 	if err = imTree.LoadVersion(version); err != nil {
@@ -968,13 +904,12 @@ func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
 }
 
 func (tree *Tree) VersionExists(version int64) (bool, error) {
-	checkpoints, err := tree.sql.loadCheckpointRange()
+	exists, err := tree.sql.HasRoot(version)
 	if err != nil {
 		return false, err
 	}
 
-	previousVersion := checkpoints.FindPrevious(version)
-	return previousVersion > 0, nil
+	return exists, nil
 }
 
 func (tree *Tree) GetAt(version int64, key []byte) ([]byte, error) {

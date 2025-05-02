@@ -87,6 +87,8 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	}
 	opts.walPages = opts.WalSize / os.Getpagesize()
 
+	opts.ShardTrees = false
+
 	if opts.Logger == nil {
 		opts.Logger = NewNopLogger()
 	}
@@ -202,7 +204,6 @@ CREATE TABLE root (
 	node_version int, 
 	node_sequence int, 
 	bytes blob, 
-	checkpoint bool, 
 	PRIMARY KEY (version))`)
 		if err != nil {
 			return err
@@ -488,17 +489,17 @@ func (sql *SqliteDb) nextShard(version int64) (int64, error) {
 	return version, sql.shards.Add(version)
 }
 
-func (sql *SqliteDb) SaveRoot(version int64, node *Node, isCheckpoint bool) error {
+func (sql *SqliteDb) SaveRoot(version int64, node *Node) error {
 	if node != nil {
 		bz, err := node.Bytes()
 		if err != nil {
 			return err
 		}
-		return sql.treeWrite.Exec("INSERT OR REPLACE INTO root(version, node_version, node_sequence, bytes, checkpoint) VALUES (?, ?, ?, ?, ?)",
-			version, node.nodeKey.Version(), int(node.nodeKey.Sequence()), bz, isCheckpoint)
+		return sql.treeWrite.Exec("INSERT OR REPLACE INTO root(version, node_version, node_sequence, bytes) VALUES (?, ?, ?, ?)",
+			version, node.nodeKey.Version(), int(node.nodeKey.Sequence()), bz)
 	}
 	// for an empty root a sentinel is saved
-	return sql.treeWrite.Exec("INSERT OR REPLACE INTO root(version, checkpoint) VALUES (?, ?)", version, isCheckpoint)
+	return sql.treeWrite.Exec("INSERT OR REPLACE INTO root(version) VALUES (?, ?)", version)
 }
 
 func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
@@ -548,75 +549,6 @@ func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
 		return nil, err
 	}
 	return root, nil
-}
-
-// lastCheckpoint fetches the last checkpoint version from the shard table previous to the loaded root's version.
-// a return value of zero and nil error indicates no checkpoint was found.
-func (sql *SqliteDb) lastCheckpoint(treeVersion int64) (checkpointVersion int64, err error) {
-	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
-	if err != nil {
-		return 0, err
-	}
-	rootQuery, err := conn.Prepare("SELECT MAX(version) FROM root WHERE checkpoint = true AND version <= ?", treeVersion)
-	if err != nil {
-		return 0, err
-	}
-	hasRow, err := rootQuery.Step()
-	if err != nil {
-		return 0, err
-	}
-	if !hasRow {
-		return 0, nil
-	}
-	err = rootQuery.Scan(&checkpointVersion)
-	if err != nil {
-		return 0, err
-	}
-
-	if err = rootQuery.Close(); err != nil {
-		return 0, err
-	}
-	if err = conn.Close(); err != nil {
-		return 0, err
-	}
-	return checkpointVersion, nil
-}
-
-func (sql *SqliteDb) loadCheckpointRange() (*VersionRange, error) {
-	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
-	if err != nil {
-		return nil, err
-	}
-	q, err := conn.Prepare("SELECT version FROM root WHERE checkpoint = true ORDER BY version")
-	if err != nil {
-		return nil, err
-	}
-	var version int64
-	versionRange := &VersionRange{}
-	for {
-		hasRow, err := q.Step()
-		if err != nil {
-			return nil, err
-		}
-		if !hasRow {
-			break
-		}
-		err = q.Scan(&version)
-		if err != nil {
-			return nil, err
-		}
-		if err = versionRange.Add(version); err != nil {
-			return nil, err
-
-		}
-	}
-	if err = q.Close(); err != nil {
-		return nil, err
-	}
-	if err = conn.Close(); err != nil {
-		return nil, err
-	}
-	return versionRange, nil
 }
 
 func (sql *SqliteDb) getShard(version int64) (int64, error) {
@@ -1311,34 +1243,69 @@ func (sql *SqliteDb) hasAnyVersionKV(version int64) (bool, error) {
 	return stmt.Step()
 }
 
-func (sql *SqliteDb) CheckRoot(version int64) error {
+func (sql *SqliteDb) HasRoot(version int64) (bool, error) {
 	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	rootQuery, err := conn.Prepare("SELECT node_version FROM root WHERE version = ?", version)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	hasRow, err := rootQuery.Step()
 	if !hasRow {
-		return fmt.Errorf("root not found for version %d", version)
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if err := rootQuery.Close(); err != nil {
-		return err
+		return false, err
 	}
 
 	if err := conn.Close(); err != nil {
-		return err
+		return false, err
 	}
 
-	return nil
+	return true, nil
+}
+
+func (sql *SqliteDb) latestRoot() (version int64, err error) {
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
+	if err != nil {
+		return 0, err
+	}
+
+	rootQuery, err := conn.Prepare("SELECT MAX(version) FROM root LIMIT 1")
+	if err != nil {
+		return 0, err
+	}
+
+	hasRow, err := rootQuery.Step()
+	if !hasRow {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	err = rootQuery.Scan(&version)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := rootQuery.Close(); err != nil {
+		return 0, err
+	}
+
+	if err := conn.Close(); err != nil {
+		return 0, err
+	}
+
+	return version, nil
 }
 
 func extractValue(buf []byte) ([]byte, error) {

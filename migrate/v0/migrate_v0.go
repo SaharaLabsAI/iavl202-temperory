@@ -347,7 +347,7 @@ func allCommand() *cobra.Command {
 					}
 
 					root, err := sql.WriteSnapshot(cmd.Context(), tree.Version(), nextNodeFn,
-						iavlv2.SnapshotOptions{StoreLeafValues: true, WriteCheckpoint: true})
+						iavlv2.SnapshotOptions{StoreLeafValues: true})
 					if err != nil {
 						panic(err)
 					}

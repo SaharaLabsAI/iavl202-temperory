@@ -30,7 +30,7 @@ func TestTree_Hash(t *testing.T) {
 	opts.Until = 100
 	opts.UntilHash = "0101e1d6f3158dcb7221acd7ed36ce19f2ef26847ffea7ce69232e362539e5cf"
 	treeOpts := TreeOptions{
-		CheckpointInterval: 10, HeightFilter: 1, StateStorage: true, EvictionDepth: 8, MetricsProxy: metrics.NewStructMetrics(),
+		HeightFilter: 1, StateStorage: true, EvictionDepth: 8, MetricsProxy: metrics.NewStructMetrics(),
 	}
 
 	testStart := time.Now()
@@ -49,11 +49,10 @@ func TestTree_Hash(t *testing.T) {
 }
 
 func TestTree_Build_Load(t *testing.T) {
-	// build the initial version of the tree with periodic checkpoints
 	tmpDir := t.TempDir()
 	opts := testutil.NewTreeBuildOptions().With10_000()
 	multiTree := NewMultiTree(NewTestLogger(), tmpDir, TreeOptions{
-		CheckpointInterval: 4000, HeightFilter: 0, StateStorage: false, MetricsProxy: metrics.NewStructMetrics(),
+		HeightFilter: 0, StateStorage: false, MetricsProxy: metrics.NewStructMetrics(),
 	})
 	itrs, ok := opts.Iterator.(*bench.ChangesetIterators)
 	require.True(t, ok)
@@ -214,7 +213,6 @@ func Test_Replay(t *testing.T) {
 	sql, err := NewSqliteDb(pool, SqliteDbOptions{Path: tmpDir})
 	require.NoError(t, err)
 	opts := DefaultTreeOptions()
-	opts.CheckpointInterval = 100
 	tree := NewTree(sql, pool, opts)
 
 	// we must buffer all sets/deletes and order them first for replay to work properly.
@@ -314,7 +312,6 @@ func Test_Prune_Logic(t *testing.T) {
 	sql, err := NewSqliteDb(pool, SqliteDbOptions{Path: tmpDir, ShardTrees: false, Logger: NewDebugLogger()})
 	require.NoError(t, err)
 	treeOpts := DefaultTreeOptions()
-	treeOpts.CheckpointInterval = 100
 	tree := NewTree(sql, pool, treeOpts)
 
 	for ; itr.Valid(); err = itr.Next() {

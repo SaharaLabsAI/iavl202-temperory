@@ -13,14 +13,12 @@ import (
 
 type pruneSignal struct {
 	pruneVersion int64
-	checkpoints  VersionRange
 }
 
 type saveSignal struct {
-	batch          *sqliteBatch
-	root           *Node
-	version        int64
-	wantCheckpoint bool
+	batch   *sqliteBatch
+	root    *Node
+	version int64
 }
 
 type saveResult struct {
@@ -78,7 +76,6 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 	var (
 		pruneVersion     int64
 		nextPruneVersion int64
-		checkpoints      VersionRange
 		orphanQuery      *gosqlite.Stmt
 		deleteOrphan     *gosqlite.Stmt
 		deleteLeaf       *gosqlite.Stmt
@@ -107,21 +104,11 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 		return nil
 	}
 	startPrune := func(startPruningVersion int64) error {
-		// only prune leafs to shard (checkpoint) boundaries.
-		// e.g. given shards = [100, 200, 300];
-		// startPruningVersion = 150; pruneTo = 100
-		// startPruningVersion = 350; pruneTo = 300
-		// startPruningVersion = 50; do nothing
-		pruneTo := checkpoints.FindPrevious(startPruningVersion)
-		if pruneTo == -1 {
-			w.logger.Debug(fmt.Sprintf("skipping leaf prune: requested prune version %d < first checkpoint", startPruningVersion))
-			return nil
-		}
-		pruneVersion = pruneTo
+		pruneVersion = startPruningVersion
 		pruneCount = 0
 		pruneStartTime = time.Now()
 
-		w.logger.Debug(fmt.Sprintf("leaf prune starting requested=%d pruneTo=%d", startPruningVersion, pruneTo))
+		w.logger.Debug(fmt.Sprintf("leaf prune starting pruneTo=%d", pruneVersion))
 		if err = beginPruneBatch(pruneVersion); err != nil {
 			return err
 		}
@@ -207,10 +194,8 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 	saveLeaves := func(sig *saveSignal) {
 		res := &saveResult{}
 		res.n, res.err = sig.batch.saveLeaves()
-		if sig.batch.isCheckpoint() {
-			if err = w.sql.leafWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-				w.logger.Error("failed leaf wal_checkpoint", "error", err)
-			}
+		if err = w.sql.leafWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+			w.logger.Error("failed leaf wal_checkpoint", "error", err)
 		}
 		w.leafResult <- res
 	}
@@ -227,7 +212,6 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 				}
 			case sig := <-w.leafPruneCh:
 				w.logger.Warn(fmt.Sprintf("leaf prune signal received while pruning version=%d next=%d", pruneVersion, sig.pruneVersion))
-				checkpoints = sig.checkpoints
 				nextPruneVersion = sig.pruneVersion
 			case <-ctx.Done():
 				return nil
@@ -242,7 +226,6 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 			case sig := <-w.leafCh:
 				saveLeaves(sig)
 			case sig := <-w.leafPruneCh:
-				checkpoints = sig.checkpoints
 				err = startPrune(sig.pruneVersion)
 				if err != nil {
 					return fmt.Errorf("failed to start leaf prune; %w", err)
@@ -259,7 +242,6 @@ const pruneBatchSize = 500_000
 func (w *sqlWriter) treeLoop(ctx context.Context) error {
 	var (
 		nextPruneVersion int64
-		checkpoints      VersionRange
 		pruneVersion     int64
 		pruneCount       int64
 		pruneStartTime   time.Time
@@ -308,15 +290,13 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 		res := &saveResult{}
 		res.n, res.err = sig.batch.saveBranches()
 		if res.err == nil {
-			err := w.sql.SaveRoot(sig.version, sig.root, sig.wantCheckpoint)
+			err := w.sql.SaveRoot(sig.version, sig.root)
 			if err != nil {
 				res.err = fmt.Errorf("failed to save root path=%s version=%d: %w", w.sql.opts.Path, sig.version, err)
 			}
 		}
-		if sig.batch.isCheckpoint() {
-			if err := w.sql.treeWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-				res.err = fmt.Errorf("failed tree checkpoint; %w", err)
-			}
+		if err := w.sql.treeWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+			res.err = fmt.Errorf("failed tree checkpoint; %w", err)
 		}
 		w.treeResult <- res
 	}
@@ -371,15 +351,14 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 				return err
 			}
 
-			prevCheckpoint := checkpoints.FindPrevious(pruneVersion)
-			if err = w.sql.treeWrite.Exec("DELETE FROM root WHERE version < ?", prevCheckpoint); err != nil {
+			if err = w.sql.treeWrite.Exec("DELETE FROM root WHERE version < ?", pruneVersion); err != nil {
 				return err
 			}
 
 			w.logger.Debug(fmt.Sprintf("done tree prune count=%s dur=%s to=%d",
 				humanize.Comma(pruneCount),
 				time.Since(pruneStartTime).Round(time.Millisecond),
-				prevCheckpoint,
+				pruneVersion,
 			))
 			if nextPruneVersion != 0 {
 				if err = startPrune(nextPruneVersion); err != nil {
@@ -399,20 +378,15 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 		if pruneVersion != 0 {
 			select {
 			case sig := <-w.treeCh:
-				if sig.wantCheckpoint {
-					if err := commitPrune(); err != nil {
-						return err
-					}
-					saveTree(sig)
-					if err := beginPruneBatch(pruneVersion); err != nil {
-						return err
-					}
-				} else {
-					saveTree(sig)
+				if err := commitPrune(); err != nil {
+					return err
+				}
+				saveTree(sig)
+				if err := beginPruneBatch(pruneVersion); err != nil {
+					return err
 				}
 			case sig := <-w.treePruneCh:
 				w.logger.Warn(fmt.Sprintf("tree prune signal received while pruning version=%d next=%d", pruneVersion, sig.pruneVersion))
-				checkpoints = sig.checkpoints
 				nextPruneVersion = sig.pruneVersion
 			case <-ctx.Done():
 				return nil
@@ -428,7 +402,6 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 			case sig := <-w.treeCh:
 				saveTree(sig)
 			case sig := <-w.treePruneCh:
-				checkpoints = sig.checkpoints
 				err := startPrune(sig.pruneVersion)
 				if err != nil {
 					return err
@@ -451,7 +424,7 @@ func (w *sqlWriter) saveTree(tree *Tree) error {
 		// 	Str("module", "sqlite-batch").
 		// 	Str("path", tree.sql.opts.Path).Logger(),
 	}
-	saveSig := &saveSignal{batch: batch, root: tree.root, version: tree.version, wantCheckpoint: tree.shouldCheckpoint}
+	saveSig := &saveSignal{batch: batch, root: tree.root, version: tree.version}
 	w.treeCh <- saveSig
 	w.leafCh <- saveSig
 	treeResult := <-w.treeResult
