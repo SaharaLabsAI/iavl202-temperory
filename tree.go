@@ -53,8 +53,9 @@ type Tree struct {
 	isReplaying    bool
 	evictionDepth  int8
 
-	versionLock sync.RWMutex
-	immutable   bool
+	versionLock   sync.RWMutex
+	immutable     bool
+	dirtyBranches map[NodeKey]bool
 }
 
 type TreeOptions struct {
@@ -89,6 +90,7 @@ func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 		evictionDepth:     opts.EvictionDepth,
 		leafSequence:      leafSequenceStart,
 		immutable:         false,
+		dirtyBranches:     make(map[NodeKey]bool),
 	}
 
 	tree.sqlWriter.start(ctx)
@@ -176,6 +178,7 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.leaves = nil
 	tree.branches = nil
 	tree.deletes = nil
+	tree.dirtyBranches = make(map[NodeKey]bool)
 
 	return rootHash, tree.version, nil
 }
@@ -187,6 +190,9 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 func (tree *Tree) computeHash() []byte {
 	if tree.root == nil {
 		return sha256.New().Sum(nil)
+	}
+	if !tree.root.dirty && tree.root.hash != nil {
+		return tree.root.hash
 	}
 	tree.deepHash(tree.root, 0)
 	return tree.root.hash
@@ -220,7 +226,11 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 		return
 	}
 
-	tree.branches = append(tree.branches, node)
+	_, exists := tree.dirtyBranches[node.nodeKey]
+	if !exists {
+		tree.branches = append(tree.branches, node)
+	}
+	tree.dirtyBranches[node.nodeKey] = true
 
 	// if the node is missing a hash then it's children have already been loaded above.
 	// if the node has a hash then traverse the dirty path.
@@ -869,6 +879,7 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 		metricsProxy:      tree.metricsProxy,
 		evictionDepth:     tree.evictionDepth,
 		leafSequence:      leafSequenceStart,
+		dirtyBranches:     make(map[NodeKey]bool),
 	}
 
 	return imTree, nil
@@ -894,6 +905,7 @@ func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
 		metricsProxy:      tree.metricsProxy,
 		evictionDepth:     tree.evictionDepth,
 		leafSequence:      leafSequenceStart,
+		dirtyBranches:     make(map[NodeKey]bool),
 	}
 
 	if err = imTree.LoadVersion(version); err != nil {
