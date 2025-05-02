@@ -199,7 +199,7 @@ func (sql *SqliteDb) init() error {
 	if !hasRow {
 		err = sql.treeWrite.Exec(`
 CREATE TABLE orphan (version int, sequence int, at int);
-CREATE INDEX orphan_idx ON orphan (at);
+CREATE INDEX orphan_idx ON orphan (at DESC);
 CREATE TABLE root (
 	version int, 
 	node_version int, 
@@ -246,7 +246,7 @@ CREATE TABLE latest (key blob, value blob, PRIMARY KEY (key));
 CREATE TABLE leaf (version int, sequence int, key blob, bytes blob, orphaned bool);
 CREATE TABLE leaf_delete (version int, sequence int, key blob, PRIMARY KEY (version, sequence));
 CREATE TABLE leaf_orphan (version int, sequence int, at int);
-CREATE INDEX leaf_orphan_idx ON leaf_orphan (at);`)
+CREATE INDEX leaf_orphan_idx ON leaf_orphan (at DESC);`)
 		if err != nil {
 			return err
 		}
@@ -960,7 +960,7 @@ func (sql *SqliteDb) replayChangelog(tree *Tree, toVersion int64, targetHash []b
 	}()
 
 	sql.opts.Logger.Info("ensure leaf_delete_index exists...", logPath...)
-	if err := sql.leafWrite.Exec("CREATE UNIQUE INDEX IF NOT EXISTS leaf_delete_idx ON leaf_delete (version, sequence)"); err != nil {
+	if err := sql.leafWrite.Exec("CREATE UNIQUE INDEX IF NOT EXISTS leaf_delete_idx ON leaf_delete (version DESC, sequence)"); err != nil {
 		return err
 	}
 	sql.opts.Logger.Info("...done", logPath...)
