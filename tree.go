@@ -929,3 +929,11 @@ func (tree *Tree) VersionExists(version int64) (bool, error) {
 func (tree *Tree) GetAt(version int64, key []byte) ([]byte, error) {
 	return tree.sql.GetAt(version, key)
 }
+
+func (tree *Tree) Warm() error {
+	if err := tree.sql.WarmLeaves(); err != nil {
+		return err
+	}
+
+	return tree.sql.WarmBranches()
+}

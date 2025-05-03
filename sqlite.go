@@ -81,7 +81,7 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 		opts.WalSize = 1024 * 1024 * 100
 	}
 	if opts.CacheSize == 0 {
-		opts.CacheSize = 2 * 1024 * 1024 * 1024
+		opts.CacheSize = 4 * 1024 * 1024 * 1024
 	}
 	if opts.Metrics == nil {
 		opts.Metrics = metrics.NilMetrics{}
@@ -647,13 +647,53 @@ func (sql *SqliteDb) ResetShardQueries() error {
 	return q.Close()
 }
 
+func (sql *SqliteDb) WarmBranches() error {
+	start := time.Now()
+	read, err := sql.getReadConn()
+	if err != nil {
+		return err
+	}
+	stmt, err := read.Prepare(fmt.Sprintf("SELECT version, sequence, bytes FROM tree_%d", defaultShardID))
+	if err != nil {
+		return err
+	}
+	var (
+		cnt, version, seq int64
+		vz                []byte
+	)
+	for {
+		ok, err := stmt.Step()
+		if err != nil {
+			return err
+		}
+		if !ok {
+			break
+		}
+		cnt++
+		err = stmt.Scan(&version, &seq, &vz)
+		if err != nil {
+			return err
+		}
+		if cnt%5_000_000 == 0 {
+			sql.logger.Info(fmt.Sprintf("warmed %s branches", humanize.Comma(cnt)))
+		}
+	}
+	if err = stmt.Close(); err != nil {
+		return err
+	}
+
+	sql.logger.Info(fmt.Sprintf("warmed %s branches in %s", humanize.Comma(cnt), time.Since(start)))
+
+	return stmt.Close()
+}
+
 func (sql *SqliteDb) WarmLeaves() error {
 	start := time.Now()
 	read, err := sql.getReadConn()
 	if err != nil {
 		return err
 	}
-	stmt, err := read.Prepare("SELECT version, sequence, bytes FROM leaf")
+	stmt, err := read.Prepare("SELECT version, sequence, key, bytes FROM leaf")
 	if err != nil {
 		return err
 	}
@@ -670,31 +710,7 @@ func (sql *SqliteDb) WarmLeaves() error {
 			break
 		}
 		cnt++
-		err = stmt.Scan(&version, &seq, &vz)
-		if err != nil {
-			return err
-		}
-		if cnt%5_000_000 == 0 {
-			sql.logger.Info(fmt.Sprintf("warmed %s leaves", humanize.Comma(cnt)))
-		}
-	}
-	if err = stmt.Close(); err != nil {
-		return err
-	}
-	stmt, err = read.Prepare("SELECT key, value FROM latest")
-	if err != nil {
-		return err
-	}
-	for {
-		ok, err := stmt.Step()
-		if err != nil {
-			return err
-		}
-		if !ok {
-			break
-		}
-		cnt++
-		err = stmt.Scan(&kz, &vz)
+		err = stmt.Scan(&version, &seq, &kz, &vz)
 		if err != nil {
 			return err
 		}
@@ -703,7 +719,36 @@ func (sql *SqliteDb) WarmLeaves() error {
 		}
 	}
 
+	// TODO: remove broken latest
+
+	// if err = stmt.Close(); err != nil {
+	// 	return err
+	// }
+
+	// stmt, err = read.Prepare("SELECT key, value FROM latest")
+	// if err != nil {
+	// 	return err
+	// }
+	// for {
+	// 	ok, err := stmt.Step()
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	if !ok {
+	// 		break
+	// 	}
+	// 	cnt++
+	// 	err = stmt.Scan(&kz, &vz)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	if cnt%5_000_000 == 0 {
+	// 		sql.logger.Info(fmt.Sprintf("warmed %s leaves", humanize.Comma(cnt)))
+	// 	}
+	// }
+
 	sql.logger.Info(fmt.Sprintf("warmed %s leaves in %s", humanize.Comma(cnt), time.Since(start)))
+
 	return stmt.Close()
 }
 
