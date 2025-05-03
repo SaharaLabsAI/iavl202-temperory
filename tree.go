@@ -930,10 +930,6 @@ func (tree *Tree) GetAt(version int64, key []byte) ([]byte, error) {
 	return tree.sql.GetAt(version, key)
 }
 
-func (tree *Tree) Warm() error {
-	if err := tree.sql.WarmLeaves(); err != nil {
-		return err
-	}
-
-	return tree.sql.WarmBranches()
+func (tree *Tree) IteratorLeavesAt(version int64) (Iterator, error) {
+	return tree.IteratorAt(version, nil, nil, true)
 }
