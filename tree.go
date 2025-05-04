@@ -933,3 +933,7 @@ func (tree *Tree) GetAt(version int64, key []byte) ([]byte, error) {
 func (tree *Tree) IteratorLeavesAt(version int64) (Iterator, error) {
 	return tree.IteratorAt(version, nil, nil, true)
 }
+
+func (tree *Tree) Revert(version int64) error {
+	return tree.sql.Revert(version)
+}

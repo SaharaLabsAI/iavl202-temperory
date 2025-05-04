@@ -778,7 +778,7 @@ func (sql *SqliteDb) isSharded() (bool, error) {
 	return cnt > 1, q.Close()
 }
 
-func (sql *SqliteDb) Revert(version int) error {
+func (sql *SqliteDb) Revert(version int64) error {
 	if err := sql.leafWrite.Exec("DELETE FROM leaf WHERE version > ?", version); err != nil {
 		return err
 	}
