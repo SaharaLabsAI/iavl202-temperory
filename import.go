@@ -78,7 +78,9 @@ var bufPool = &sync.Pool{
 func (i *Importer) waitBatch() error {
 	var err error
 	if i.inflightCommit != nil {
-		err = <-i.inflightCommit
+		err1 := <-i.inflightCommit
+		err2 := <-i.inflightCommit
+		err = errors.Join(err1, err2)
 		i.inflightCommit = nil
 	}
 	return err
@@ -116,8 +118,11 @@ func (i *Importer) writeNode(node *Node) error {
 		i.inflightCommit = result
 		go func() {
 			_, leafErr := i.batch.saveLeaves()
+			result <- leafErr
+		}()
+		go func() {
 			_, branchErr := i.batch.saveBranches()
-			result <- errors.Join(leafErr, branchErr)
+			result <- branchErr
 		}()
 
 		err = i.waitBatch()
@@ -244,11 +249,19 @@ func (i *Importer) Commit() error {
 	if err != nil {
 		return err
 	}
-	_, err = i.batch.saveBranches()
-	if err != nil {
-		return err
-	}
-	_, err = i.batch.saveLeaves()
+
+	result := make(chan error)
+	i.inflightCommit = result
+	go func() {
+		_, leafErr := i.batch.saveLeaves()
+		result <- leafErr
+	}()
+	go func() {
+		_, branchErr := i.batch.saveBranches()
+		result <- branchErr
+	}()
+
+	err = i.waitBatch()
 	if err != nil {
 		return err
 	}
