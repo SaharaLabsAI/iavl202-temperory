@@ -3,8 +3,9 @@ package rollback
 import (
 	"fmt"
 
-	"github.com/cosmos/iavl/v2"
 	"github.com/spf13/cobra"
+
+	"github.com/cosmos/iavl/v2"
 )
 
 var log = iavl.NewTestLogger()
@@ -28,7 +29,7 @@ func Command() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if err = sql.Revert(version); err != nil {
+				if err = sql.Revert(int64(version)); err != nil {
 					return err
 				}
 				if err = sql.Close(); err != nil {
