@@ -81,7 +81,7 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 		opts.WalSize = 1024 * 1024 * 100
 	}
 	if opts.CacheSize == 0 {
-		opts.CacheSize = -4 * 1024 * 1024
+		opts.CacheSize = -2 * 1024 * 1024
 	}
 	if opts.Metrics == nil {
 		opts.Metrics = metrics.NilMetrics{}
