@@ -156,6 +156,8 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 		fmt.Printf("save %s leaves %d duration %d\n", b.tree.sql.opts.Path, b.leafCount, duration.Milliseconds())
 	}()
 
+	b.leafCount = 0
+
 	err := b.newChangeLogBatch()
 	if err != nil {
 		return 0, err
