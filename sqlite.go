@@ -794,50 +794,55 @@ func (sql *SqliteDb) Revert(version int) error {
 	if err := sql.treeWrite.Exec("DELETE FROM orphan WHERE at > ?", version); err != nil {
 		return err
 	}
-
-	hasShards, err := sql.isSharded()
-	if err != nil {
+	if err := sql.treeWrite.Exec(fmt.Sprintf("DELETE FROM tree_%d WHERE version > ?", defaultShardID), version); err != nil {
 		return err
 	}
-	if hasShards {
-		q, err := sql.treeWrite.Prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'tree_%'")
-		if err != nil {
-			return err
-		}
-		var shards []string
-		for {
-			hasRow, err := q.Step()
-			if err != nil {
-				return err
-			}
-			if !hasRow {
-				break
-			}
-			var shard string
-			err = q.Scan(&shard)
-			if err != nil {
-				return err
-			}
-			shardVersion, err := strconv.Atoi(shard[5:])
-			if err != nil {
-				return err
-			}
-			if shardVersion > version {
-				shards = append(shards, shard)
-			}
-		}
-		if err = q.Close(); err != nil {
-			return err
-		}
-		for _, shard := range shards {
-			if err = sql.treeWrite.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", shard)); err != nil {
-				return err
-			}
-		}
-	} else {
 
-	}
 	return nil
+
+	// hasShards, err := sql.isSharded()
+	// if err != nil {
+	// 	return err
+	// }
+	// if hasShards {
+	// 	q, err := sql.treeWrite.Prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'tree_%'")
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	var shards []string
+	// 	for {
+	// 		hasRow, err := q.Step()
+	// 		if err != nil {
+	// 			return err
+	// 		}
+	// 		if !hasRow {
+	// 			break
+	// 		}
+	// 		var shard string
+	// 		err = q.Scan(&shard)
+	// 		if err != nil {
+	// 			return err
+	// 		}
+	// 		shardVersion, err := strconv.Atoi(shard[5:])
+	// 		if err != nil {
+	// 			return err
+	// 		}
+	// 		if shardVersion > version {
+	// 			shards = append(shards, shard)
+	// 		}
+	// 	}
+	// 	if err = q.Close(); err != nil {
+	// 		return err
+	// 	}
+	// 	for _, shard := range shards {
+	// 		if err = sql.treeWrite.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", shard)); err != nil {
+	// 			return err
+	// 		}
+	// 	}
+	// } else {
+	//
+	// }
+	// return nil
 }
 
 func (sql *SqliteDb) GetLatestLeaf(key []byte) ([]byte, error) {
