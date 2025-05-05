@@ -53,9 +53,8 @@ type Tree struct {
 	isReplaying    bool
 	evictionDepth  int8
 
-	versionLock   sync.RWMutex
-	immutable     bool
-	dirtyBranches map[NodeKey]bool
+	versionLock sync.RWMutex
+	immutable   bool
 }
 
 type TreeOptions struct {
@@ -90,7 +89,6 @@ func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 		evictionDepth:     opts.EvictionDepth,
 		leafSequence:      leafSequenceStart,
 		immutable:         false,
-		dirtyBranches:     make(map[NodeKey]bool),
 	}
 
 	tree.sqlWriter.start(ctx)
@@ -178,7 +176,6 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.leaves = nil
 	tree.branches = nil
 	tree.deletes = nil
-	tree.dirtyBranches = make(map[NodeKey]bool)
 
 	return rootHash, tree.version, nil
 }
@@ -212,6 +209,13 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 		return
 	}
 
+	// otherwise accumulate the branch node
+	if !node.dirty {
+		return
+	}
+	// IMPORTANT: clear cached hash
+	node.hash = nil
+
 	if node.hash == nil {
 		// When the child is a leaf, this will initiate a leafRead from storage for the sole purpose of producing a hash.
 		// Recall that a terminal tree node may have only updated one leaf this version.
@@ -221,27 +225,18 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 		tree.deepHash(node.right(tree), depth+1)
 	}
 
-	// otherwise accumulate the branch node
-	if !node.dirty {
-		return
-	}
-
-	_, exists := tree.dirtyBranches[node.nodeKey]
-	if !exists {
-		tree.branches = append(tree.branches, node)
-	}
-	tree.dirtyBranches[node.nodeKey] = true
+	tree.branches = append(tree.branches, node)
 
 	// if the node is missing a hash then it's children have already been loaded above.
 	// if the node has a hash then traverse the dirty path.
-	if node.hash != nil {
-		if node.leftNode != nil {
-			tree.deepHash(node.leftNode, depth+1)
-		}
-		if node.rightNode != nil {
-			tree.deepHash(node.rightNode, depth+1)
-		}
-	}
+	// if node.hash != nil {
+	// 	if node.leftNode != nil {
+	// 		tree.deepHash(node.leftNode, depth+1)
+	// 	}
+	// 	if node.rightNode != nil {
+	// 		tree.deepHash(node.rightNode, depth+1)
+	// 	}
+	// }
 
 	node._hash()
 
@@ -338,6 +333,7 @@ func (tree *Tree) Set(key, value []byte) (updated bool, err error) {
 	if tree.metricsProxy != nil {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_set")
 	}
+
 	updated, err = tree.set(key, value)
 	if err != nil {
 		return false, err
@@ -347,6 +343,7 @@ func (tree *Tree) Set(key, value []byte) (updated bool, err error) {
 	} else {
 		tree.metrics.IncrCounter(1, metricsNamespace, "tree_new_node")
 	}
+
 	return updated, nil
 }
 
@@ -879,7 +876,6 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 		metricsProxy:      tree.metricsProxy,
 		evictionDepth:     tree.evictionDepth,
 		leafSequence:      leafSequenceStart,
-		dirtyBranches:     make(map[NodeKey]bool),
 	}
 
 	return imTree, nil
@@ -905,7 +901,6 @@ func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
 		metricsProxy:      tree.metricsProxy,
 		evictionDepth:     tree.evictionDepth,
 		leafSequence:      leafSequenceStart,
-		dirtyBranches:     make(map[NodeKey]bool),
 	}
 
 	if err = imTree.LoadVersion(version); err != nil {

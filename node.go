@@ -144,6 +144,11 @@ func (node *Node) calcHeightAndSize(t *Tree) error {
 
 	node.subtreeHeight = maxInt8(leftNode.subtreeHeight, rightNode.subtreeHeight) + 1
 	node.size = leftNode.size + rightNode.size
+
+	// make sure we should update hash
+	node.dirty = true
+	node.hash = nil
+
 	return nil
 }
 
