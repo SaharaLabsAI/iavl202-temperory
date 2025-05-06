@@ -213,7 +213,7 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 	}
 
 	// otherwise accumulate the branch node
-	if !node.dirty {
+	if !node.dirty || node.nodeKey.Version() != tree.version {
 		return
 	}
 	// IMPORTANT: clear cached hash
