@@ -1371,3 +1371,21 @@ func extractValue(buf []byte) ([]byte, error) {
 
 	return val, nil
 }
+
+func (sql *SqliteDb) getHeightOneBranchesIteratorQuery(start, end int64) (stmt *gosqlite.Stmt, err error) {
+	conn, err := sql.getReadConn()
+	if err != nil {
+		return nil, err
+	}
+
+	stmt, err = conn.Prepare(
+		fmt.Sprintf("SELECT version, sequence, bytes FROM tree_%d WHERE version >= ? AND version <= ?", defaultShardID))
+	if err != nil {
+		return nil, err
+	}
+	if err = stmt.Bind(start, end); err != nil {
+		return nil, err
+	}
+
+	return stmt, err
+}

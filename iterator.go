@@ -2,7 +2,9 @@ package iavl
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/eatonphil/gosqlite"
@@ -42,6 +44,7 @@ var (
 	_ Iterator = (*TreeIterator)(nil)
 	_ Iterator = (*LeafIterator)(nil)
 	_ Iterator = (*KVIterator)(nil)
+	_ Iterator = (*WrongBranchHashIterator)(nil)
 )
 
 type TreeIterator struct {
@@ -521,4 +524,165 @@ func (tree *Tree) ReverseIteratorAt(version int64, start, end []byte) (Iterator,
 	kvItr.Next()
 
 	return kvItr, nil
+}
+
+func (tree *Tree) WrongBranchHashIterator(start, end int64) (Iterator, error) {
+	var err error
+	itr := &WrongBranchHashIterator{
+		sql:     tree.sql,
+		start:   start,
+		end:     end,
+		valid:   true,
+		metrics: tree.metricsProxy,
+	}
+
+	itr.itrStmt, err = tree.sql.getHeightOneBranchesIteratorQuery(start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	if tree.metricsProxy != nil {
+		tree.metricsProxy.IncrCounter(1, "iavl_v2", "iterator", "open")
+	}
+
+	itr.Next()
+
+	return itr, err
+}
+
+type WrongBranchHashIterator struct {
+	sql     *SqliteDb
+	itrStmt *gosqlite.Stmt
+	valid   bool
+	start   int64
+	end     int64
+	err     error
+	key     []byte
+	value   []byte
+	metrics metrics.Proxy
+}
+
+func (i *WrongBranchHashIterator) Domain() (strat []byte, end []byte) {
+	s := make([]byte, 8)
+	binary.BigEndian.PutUint64(s, uint64(i.start))
+
+	e := make([]byte, 8)
+	binary.BigEndian.PutUint64(e, uint64(i.end))
+
+	return s, e
+}
+
+func (i *WrongBranchHashIterator) Valid() bool {
+	return i.valid
+}
+
+func (i *WrongBranchHashIterator) Next() {
+	if i.metrics != nil {
+		defer i.metrics.MeasureSince(time.Now(), "iavl_v2", "kv iterator", "next")
+	}
+	if !i.valid {
+		return
+	}
+
+	for {
+		hasRow, err := i.itrStmt.Step()
+		if err != nil {
+			closeErr := i.Close()
+			if closeErr != nil {
+				i.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
+			}
+			return
+		}
+
+		if !hasRow {
+			closeErr := i.Close()
+			if closeErr != nil {
+				i.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
+			}
+			return
+		}
+
+		var (
+			version  int64
+			sequence int
+			nodeBz   gosqlite.RawBytes
+		)
+
+		if err = i.itrStmt.Scan(&version, &sequence, &nodeBz); err != nil {
+			closeErr := i.Close()
+			if closeErr != nil {
+				i.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
+			}
+			return
+		}
+
+		nodeKey := NewNodeKey(version, uint32(sequence))
+		node, err := MakeNode(i.sql.pool, nodeKey, nodeBz)
+		if err != nil {
+			closeErr := i.Close()
+			if closeErr != nil {
+				i.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
+			}
+			return
+		}
+
+		if node.subtreeHeight != 1 {
+			continue
+		}
+
+		node.leftNode, err = i.sql.getLeaf(node.leftNodeKey)
+		if err != nil {
+			closeErr := i.Close()
+			if closeErr != nil {
+				i.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
+			}
+			return
+		}
+
+		node.rightNode, err = i.sql.getLeaf(node.rightNodeKey)
+		if err != nil {
+			closeErr := i.Close()
+			if closeErr != nil {
+				i.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
+			}
+			return
+		}
+
+		oldHash := slices.Clone(node.hash)
+		node.hash = nil
+		node._hash()
+
+		if !bytes.Equal(node.hash, oldHash) {
+			i.key = node.leftNode.key
+
+			b := make([]byte, 8)
+			binary.BigEndian.PutUint64(b, uint64(node.Version()))
+			i.value = b
+
+			break
+		}
+	}
+}
+
+func (i *WrongBranchHashIterator) Key() (key []byte) {
+	return i.key
+}
+
+func (i *WrongBranchHashIterator) Value() (key []byte) {
+	return i.value
+}
+
+func (i *WrongBranchHashIterator) Error() error {
+	return i.err
+}
+
+func (i *WrongBranchHashIterator) Close() error {
+	if i.valid {
+		if i.metrics != nil {
+			i.metrics.IncrCounter(1, "iavl_v2", "iterator", "close")
+		}
+		i.valid = false
+		return i.itrStmt.Close()
+	}
+	return nil
 }
