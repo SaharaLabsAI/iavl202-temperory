@@ -55,6 +55,7 @@ type Tree struct {
 
 	versionLock sync.RWMutex
 	immutable   bool
+	rootHashed  bool
 }
 
 type TreeOptions struct {
@@ -89,6 +90,7 @@ func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 		evictionDepth:     opts.EvictionDepth,
 		leafSequence:      leafSequenceStart,
 		immutable:         false,
+		rootHashed:        false,
 	}
 
 	tree.sqlWriter.start(ctx)
@@ -188,10 +190,11 @@ func (tree *Tree) computeHash() []byte {
 	if tree.root == nil {
 		return sha256.New().Sum(nil)
 	}
-	if !tree.root.dirty && tree.root.hash != nil {
+	if tree.rootHashed && tree.root.hash != nil {
 		return tree.root.hash
 	}
 	tree.deepHash(tree.root, 0)
+	tree.rootHashed = true
 	return tree.root.hash
 }
 
@@ -329,6 +332,8 @@ func (tree *Tree) Set(key, value []byte) (updated bool, err error) {
 	if tree.immutable {
 		panic("set on immutable tree")
 	}
+
+	tree.rootHashed = false
 
 	if tree.metricsProxy != nil {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_set")
@@ -876,6 +881,7 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 		metricsProxy:      tree.metricsProxy,
 		evictionDepth:     tree.evictionDepth,
 		leafSequence:      leafSequenceStart,
+		rootHashed:        true,
 	}
 
 	return imTree, nil
@@ -901,6 +907,7 @@ func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
 		metricsProxy:      tree.metricsProxy,
 		evictionDepth:     tree.evictionDepth,
 		leafSequence:      leafSequenceStart,
+		rootHashed:        true,
 	}
 
 	if err = imTree.LoadVersion(version); err != nil {
