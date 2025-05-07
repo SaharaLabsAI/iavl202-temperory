@@ -1179,14 +1179,27 @@ func (sql *SqliteDb) GetAt(version int64, key []byte) ([]byte, error) {
 	}
 
 	if sql.queryKV == nil {
-		sql.queryKV, err = conn.Prepare("SELECT bytes FROM changelog.leaf WHERE version <= ? AND key = ? ORDER BY version DESC LIMIT 1")
+		sql.queryKV, err = conn.Prepare(`
+SELECT leaf.bytes
+FROM changelog.leaf leaf
+WHERE leaf.key = ?
+  AND leaf.version <= ?
+  AND NOT EXISTS (
+	  SELECT leaf_delete.version
+	  FROM changelog.leaf_delete leaf_delete
+	  WHERE leaf_delete.key = ?
+	    AND leaf_delete.version BETWEEN leaf.version AND ?
+	  LIMIT 1
+  )
+ORDER BY leaf.version DESC
+LIMIT 1;`)
 		if err != nil {
 			return nil, err
 		}
 	}
 	defer sql.queryKV.Reset()
 
-	if err = sql.queryKV.Bind(version, key); err != nil {
+	if err = sql.queryKV.Bind(key, version, version); err != nil {
 		return nil, err
 	}
 
@@ -1231,38 +1244,107 @@ func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascend
 	switch {
 	case start == nil && end == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE version <= ? ORDER BY key %s) WHERE rn = 1;", suffix))
+			fmt.Sprintf(`
+SELECT key, bytes
+FROM (
+	SELECT *,
+	ROW_NUMBER() OVER (
+		PARTITION BY key
+		ORDER BY version DESC
+	) AS rn,
+	(SELECT MAX(version)
+	 FROM changelog.leaf_delete d
+	 WHERE d.key = l.key
+       AND d.version BETWEEN l.version AND ?
+    ) AS max_delete_version
+    FROM changelog.leaf l
+	WHERE l.version <= ? ORDER BY key %s
+) AS ranked
+WHERE rn = 1
+  AND max_delete_version IS NULL;`, suffix))
+		// `, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
-		if err = stmt.Bind(version); err != nil {
+		if err = stmt.Bind(version, version); err != nil {
 			return nil, idx, err
 		}
 	case start == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE version <= ? AND %s ORDER BY key %s) WHERE rn = 1;", endKey, suffix))
+			fmt.Sprintf(`
+SELECT key, bytes
+FROM (
+	SELECT *,
+	ROW_NUMBER() OVER (
+		PARTITION BY key
+		ORDER BY version DESC
+	) AS rn,
+	(SELECT MAX(version)
+	 FROM changelog.leaf_delete d
+	 WHERE d.key = l.key
+       AND d.version BETWEEN l.version AND ?
+    ) AS max_delete_version
+    FROM changelog.leaf l
+	WHERE l.version <= ? AND %s ORDER BY key %s
+) AS ranked
+WHERE rn = 1
+  AND max_delete_version IS NULL;`, endKey, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
-		if err = stmt.Bind(version, end); err != nil {
+		if err = stmt.Bind(version, version, end); err != nil {
 			return nil, idx, err
 		}
 	case end == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE version <= ? AND key >= ? ORDER BY key %s) WHERE rn = 1;", suffix))
+			fmt.Sprintf(`
+SELECT key, bytes
+FROM (
+	SELECT *,
+	ROW_NUMBER() OVER (
+		PARTITION BY key
+		ORDER BY version DESC
+	) AS rn,
+	(SELECT MAX(version)
+	 FROM changelog.leaf_delete d
+	 WHERE d.key = l.key
+       AND d.version BETWEEN l.version AND ?
+    ) AS max_delete_version
+    FROM changelog.leaf l
+	WHERE l.version <= ? AND key >= ? ORDER BY key %s
+) AS ranked
+WHERE rn = 1
+  AND max_delete_version IS NULL;`, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
-		if err = stmt.Bind(version, start); err != nil {
+		if err = stmt.Bind(version, version, start); err != nil {
 			return nil, idx, err
 		}
 	default:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE version <= ? AND key >= ? AND %s ORDER BY key %s) WHERE rn = 1;", endKey, suffix))
+			fmt.Sprintf(`
+SELECT key, bytes
+FROM (
+	SELECT *,
+	ROW_NUMBER() OVER (
+		PARTITION BY key
+		ORDER BY version DESC
+	) AS rn,
+	(SELECT MAX(version)
+	 FROM changelog.leaf_delete d
+	 WHERE d.key = l.key
+       AND d.version BETWEEN l.version AND ?
+    ) AS max_delete_version
+    FROM changelog.leaf l
+	WHERE l.version <= ? AND key >= ? AND %s ORDER BY key %s
+) AS ranked
+WHERE rn = 1
+  AND max_delete_version IS NULL;`, endKey, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
-		if err = stmt.Bind(version, start, end); err != nil {
+		if err = stmt.Bind(version, version, start, end); err != nil {
 			return nil, idx, err
 		}
 	}

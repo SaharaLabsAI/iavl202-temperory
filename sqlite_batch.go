@@ -235,6 +235,11 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 		return b.leafCount, err
 	}
 
+	err = tree.sql.leafWrite.Exec("CREATE UNIQUE INDEX IF NOT EXISTS leaf_delete_key_index ON leaf (key, version);")
+	if err != nil {
+		return b.leafCount, err
+	}
+
 	return b.leafCount, nil
 }
 
