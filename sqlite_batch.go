@@ -150,12 +150,6 @@ func (b *sqliteBatch) treeMaybeCommit(shardID int64) (err error) {
 }
 
 func (b *sqliteBatch) saveLeaves() (int64, error) {
-	start := time.Now()
-	defer func() {
-		duration := time.Since(start)
-		fmt.Printf("save %s leaves %d duration %d\n", b.tree.sql.opts.Path, b.leafCount, duration.Milliseconds())
-	}()
-
 	b.leafCount = 0
 
 	err := b.newChangeLogBatch()
@@ -245,12 +239,6 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 }
 
 func (b *sqliteBatch) saveBranches() (n int64, err error) {
-	start := time.Now()
-	defer func() {
-		duration := time.Since(start)
-		fmt.Printf("save %s branches %d duration %d\n", b.tree.sql.opts.Path, b.treeCount, duration.Milliseconds())
-	}()
-
 	tree := b.tree
 	b.treeCount = 0
 
