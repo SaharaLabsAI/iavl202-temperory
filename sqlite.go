@@ -22,13 +22,14 @@ const defaultSQLitePath = "/tmp/iavl-v2"
 const defaultShardID = 1
 
 type SqliteDbOptions struct {
-	Path       string
-	Mode       int
-	MmapSize   uint64
-	WalSize    int
-	CacheSize  int
-	ConnArgs   string
-	ShardTrees bool
+	Path          string
+	Mode          int
+	MmapSize      uint64
+	WalSize       int
+	CacheSize     int
+	ConnArgs      string
+	TempStoreSize int
+	ShardTrees    bool
 
 	Logger  Logger
 	Metrics metrics.Proxy
@@ -75,13 +76,19 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 		opts.Mode = gosqlite.OPEN_READWRITE | gosqlite.OPEN_CREATE | gosqlite.OPEN_NOMUTEX
 	}
 	if opts.MmapSize == 0 {
-		opts.MmapSize = 8 * 1024 * 1024 * 1024
+		// 512M
+		opts.MmapSize = 512 * 1024 * 1024
 	}
 	if opts.WalSize == 0 {
 		opts.WalSize = 1024 * 1024 * 100
 	}
 	if opts.CacheSize == 0 {
-		opts.CacheSize = -2 * 1024 * 1024
+		// 512M
+		opts.CacheSize = -512 * 1024
+	}
+	if opts.TempStoreSize == 0 {
+		// 200M
+		opts.TempStoreSize = 200 * 1024 * 1024
 	}
 	if opts.Metrics == nil {
 		opts.Metrics = metrics.NilMetrics{}
@@ -335,6 +342,14 @@ func (sql *SqliteDb) newReadConn() (*gosqlite.Conn, error) {
 		return nil, err
 	}
 	err = conn.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", sql.opts.CacheSize))
+	if err != nil {
+		return nil, err
+	}
+	err = conn.Exec("PRAGMA temp_store=MEMORY;")
+	if err != nil {
+		return nil, err
+	}
+	err = conn.Exec(fmt.Sprintf("PRAGMA temp_store_size=%d;", sql.opts.TempStoreSize))
 	if err != nil {
 		return nil, err
 	}
