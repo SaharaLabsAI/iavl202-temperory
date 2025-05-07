@@ -1379,7 +1379,7 @@ func (sql *SqliteDb) getHeightOneBranchesIteratorQuery(start, end int64) (stmt *
 	}
 
 	stmt, err = conn.Prepare(
-		fmt.Sprintf("SELECT version, sequence, bytes FROM tree_%d WHERE version >= ? AND version <= ?", defaultShardID))
+		fmt.Sprintf("SELECT version, sequence, bytes FROM tree_%d WHERE version >= ? AND version <= ? ORDER BY version ASC", defaultShardID))
 	if err != nil {
 		return nil, err
 	}
