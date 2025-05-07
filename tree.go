@@ -69,7 +69,7 @@ func DefaultTreeOptions() TreeOptions {
 	return TreeOptions{
 		StateStorage:  true,
 		HeightFilter:  1,
-		EvictionDepth: 26,
+		EvictionDepth: 29,
 		MetricsProxy:  &metrics.NilMetrics{},
 	}
 }

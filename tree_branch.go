@@ -3,7 +3,6 @@ package iavl
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"sort"
 )
 

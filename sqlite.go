@@ -218,6 +218,9 @@ CREATE TABLE root (
 		}
 
 		pageSize := os.Getpagesize()
+		if pageSize < 8192 {
+			pageSize = 8192
+		}
 		sql.logger.Info(fmt.Sprintf("setting page size to %s", humanize.Bytes(uint64(pageSize))))
 		err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA page_size=%d; VACUUM;", pageSize))
 		if err != nil {
@@ -259,6 +262,9 @@ CREATE INDEX leaf_orphan_idx ON leaf_orphan (at DESC);`)
 		}
 
 		pageSize := os.Getpagesize()
+		if pageSize < 8192 {
+			pageSize = 8192
+		}
 		sql.logger.Info(fmt.Sprintf("setting page size to %s", humanize.Bytes(uint64(pageSize))))
 		err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA page_size=%d; VACUUM;", pageSize))
 		if err != nil {

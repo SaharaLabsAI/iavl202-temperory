@@ -10,11 +10,12 @@ import (
 	"unsafe"
 
 	"github.com/cosmos/iavl-bench/bench"
-	"github.com/cosmos/iavl/v2/metrics"
-	"github.com/cosmos/iavl/v2/testutil"
 	"github.com/dustin/go-humanize"
 	api "github.com/kocubinski/costor-api"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cosmos/iavl/v2/metrics"
+	"github.com/cosmos/iavl/v2/testutil"
 )
 
 func TestTree_Hash(t *testing.T) {
@@ -30,10 +31,11 @@ func TestTree_Hash(t *testing.T) {
 	opts.Until = 100
 	opts.UntilHash = "0101e1d6f3158dcb7221acd7ed36ce19f2ef26847ffea7ce69232e362539e5cf"
 	treeOpts := TreeOptions{
-		HeightFilter: 1, StateStorage: true, EvictionDepth: 8, MetricsProxy: metrics.NewStructMetrics(),
+		HeightFilter: 1, StateStorage: true, EvictionDepth: 19, MetricsProxy: metrics.NewStructMetrics(),
 	}
 
 	testStart := time.Now()
+	testStart = time.Now()
 	multiTree := NewMultiTree(NewTestLogger(), tmpDir, treeOpts)
 	itrs, ok := opts.Iterator.(*bench.ChangesetIterators)
 	require.True(t, ok)
