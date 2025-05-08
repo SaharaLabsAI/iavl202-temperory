@@ -80,7 +80,7 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 		opts.MmapSize = 512 * 1024 * 1024
 	}
 	if opts.WalSize == 0 {
-		opts.WalSize = 1024 * 1024 * 200
+		opts.WalSize = 1024 * 1024 * 100
 	}
 	if opts.CacheSize == 0 {
 		// 512M
