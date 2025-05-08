@@ -165,73 +165,82 @@ func (tree *Tree) balance(node *Node) (newSelf *Node, err error) {
 	if node.hash != nil {
 		return nil, errors.New("unexpected balance() call on persisted node")
 	}
-	balance, err := node.calcBalance(tree)
+
+	// Pre-fetch left and right nodes once to avoid repeated fetches
+	leftNode, err := node.getLeftNode(tree)
 	if err != nil {
 		return nil, err
 	}
 
+	rightNode, err := node.getRightNode(tree)
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate balance directly instead of through calcBalance
+	balance := int(leftNode.subtreeHeight) - int(rightNode.subtreeHeight)
+
+	// No balancing needed - fast path
+	if balance >= -1 && balance <= 1 {
+		return node, nil
+	}
+
+	// Left heavy subtree
 	if balance > 1 {
-		lftBalance, err := node.leftNode.calcBalance(tree)
+		// Calculate left child balance directly to avoid another node fetch
+		leftLeftNode, err := leftNode.getLeftNode(tree)
 		if err != nil {
 			return nil, err
 		}
 
-		if lftBalance >= 0 {
-			// Left Left Case
-			newNode, err := tree.rotateRight(node)
+		leftRightNode, err := leftNode.getRightNode(tree)
+		if err != nil {
+			return nil, err
+		}
+
+		leftBalance := int(leftLeftNode.subtreeHeight) - int(leftRightNode.subtreeHeight)
+
+		if leftBalance >= 0 {
+			// Left-Left case: single right rotation
+			return tree.rotateRight(node)
+		} else {
+			// Left-Right case: left rotation on left child, then right rotation on node
+			newLeftNode, err := tree.rotateLeft(leftNode)
 			if err != nil {
 				return nil, err
 			}
-			return newNode, nil
-		}
-		// Left Right Case
-		newLeftNode, err := tree.rotateLeft(node.leftNode)
-		if err != nil {
-			return nil, err
-		}
-		node.setLeft(newLeftNode)
+			node.setLeft(newLeftNode)
 
-		newNode, err := tree.rotateRight(node)
+			return tree.rotateRight(node)
+		}
+	} else { // balance < -1, right heavy subtree
+		// Calculate right child balance directly to avoid another node fetch
+		rightLeftNode, err := rightNode.getLeftNode(tree)
 		if err != nil {
 			return nil, err
 		}
 
-		return newNode, nil
-	}
-	if balance < -1 {
-		rightNode, err := node.getRightNode(tree)
+		rightRightNode, err := rightNode.getRightNode(tree)
 		if err != nil {
 			return nil, err
 		}
 
-		rightBalance, err := rightNode.calcBalance(tree)
-		if err != nil {
-			return nil, err
-		}
+		rightBalance := int(rightLeftNode.subtreeHeight) - int(rightRightNode.subtreeHeight)
+
 		if rightBalance <= 0 {
-			// Right Right Case
-			newNode, err := tree.rotateLeft(node)
+			// Right-Right case: single left rotation
+			return tree.rotateLeft(node)
+		} else {
+			// Right-Left case: right rotation on right child, then left rotation on node
+			newRightNode, err := tree.rotateRight(rightNode)
 			if err != nil {
 				return nil, err
 			}
-			return newNode, nil
-		}
-		// Right Left Case
-		// TODO should be mutate? ref v1 and v0
-		newRightNode, err := tree.rotateRight(rightNode)
-		if err != nil {
-			return nil, err
-		}
-		node.setRight(newRightNode)
+			node.setRight(newRightNode)
 
-		newNode, err := tree.rotateLeft(node)
-		if err != nil {
-			return nil, err
+			return tree.rotateLeft(node)
 		}
-		return newNode, nil
 	}
-	// Nothing changed
-	return node, nil
 }
 
 func (node *Node) calcBalance(t *Tree) (int, error) {
