@@ -526,12 +526,19 @@ func (sql *SqliteDb) nextShard(_ int64) (int64, error) {
 
 func (sql *SqliteDb) SaveRoot(version int64, node *Node) error {
 	if node != nil {
-		bz, err := node.Bytes()
+		buf := bufPool.Get().(*bytes.Buffer)
+		err := node.BytesWithBuffer(buf)
 		if err != nil {
 			return err
 		}
-		return sql.treeWrite.Exec("INSERT OR REPLACE INTO root(version, node_version, node_sequence, bytes) VALUES (?, ?, ?, ?)",
+		bz := buf.Bytes()
+		err = sql.treeWrite.Exec("INSERT OR REPLACE INTO root(version, node_version, node_sequence, bytes) VALUES (?, ?, ?, ?)",
 			version, node.nodeKey.Version(), int(node.nodeKey.Sequence()), bz)
+		if err != nil {
+			return err
+		}
+		bufPool.Put(buf)
+		return nil
 	}
 	// for an empty root a sentinel is saved
 	return sql.treeWrite.Exec("INSERT OR REPLACE INTO root(version) VALUES (?)", version)

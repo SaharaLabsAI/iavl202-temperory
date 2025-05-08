@@ -1,6 +1,7 @@
 package iavl
 
 import (
+	"bytes"
 	"fmt"
 	"time"
 
@@ -168,13 +169,20 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 			val = leaf.value
 			leaf.value = nil
 		}
-		bz, err = leaf.Bytes()
+
+		buf := bufPool.Get().(*bytes.Buffer)
+
+		err := leaf.BytesWithBuffer(buf)
 		if err != nil {
 			return 0, err
 		}
+
+		bz = buf.Bytes()
 		if err = b.leafInsert.Exec(leaf.nodeKey.Version(), int(leaf.nodeKey.Sequence()), leaf.key, bz); err != nil {
 			return 0, err
 		}
+		bufPool.Put(buf)
+
 		if tree.storeLatestLeaves {
 			if err = b.latestInsert.Exec(leaf.key, val); err != nil {
 				return 0, err
@@ -260,13 +268,20 @@ func (b *sqliteBatch) saveBranches() (n int64, err error) {
 
 	for _, node := range tree.branches {
 		b.treeCount++
-		bz, err := node.Bytes()
+
+		buf := bufPool.Get().(*bytes.Buffer)
+
+		err := node.BytesWithBuffer(buf)
 		if err != nil {
 			return 0, err
 		}
+
+		bz := buf.Bytes()
 		if err = b.treeInsert.Exec(node.nodeKey.Version(), int(node.nodeKey.Sequence()), bz); err != nil {
 			return 0, err
 		}
+		bufPool.Put(buf)
+
 		if err = b.treeMaybeCommit(shardID); err != nil {
 			return 0, err
 		}

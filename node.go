@@ -530,6 +530,11 @@ func (node *Node) WriteBytes(w io.Writer) error {
 	return nil
 }
 
+func (node *Node) BytesWithBuffer(buf *bytes.Buffer) error {
+	buf.Reset()
+	return node.WriteBytes(buf)
+}
+
 func (node *Node) Bytes() ([]byte, error) {
 	buf := &bytes.Buffer{}
 	err := node.WriteBytes(buf)
