@@ -56,6 +56,8 @@ type Tree struct {
 	versionLock sync.RWMutex
 	immutable   bool
 	rootHashed  bool
+	cache       map[string][]byte
+	deleted     map[string]bool
 }
 
 type TreeOptions struct {
@@ -91,6 +93,8 @@ func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 		leafSequence:      leafSequenceStart,
 		immutable:         false,
 		rootHashed:        false,
+		cache:             make(map[string][]byte),
+		deleted:           make(map[string]bool),
 	}
 
 	tree.sqlWriter.start(ctx)
@@ -127,6 +131,9 @@ func (tree *Tree) LoadVersion(version int64) (err error) {
 		return err
 	}
 
+	tree.cache = make(map[string][]byte)
+	tree.deleted = make(map[string]bool)
+
 	return nil
 }
 
@@ -140,6 +147,8 @@ func (tree *Tree) LoadSnapshot(version int64, traverseOrder TraverseOrderType) (
 		return fmt.Errorf("requested %d found snapshot %d, replay not yet supported", version, v)
 	}
 	tree.version = v
+	tree.cache = make(map[string][]byte)
+	tree.deleted = make(map[string]bool)
 	return nil
 }
 
@@ -167,6 +176,8 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	}
 
 	tree.branchOrphans = nil
+	tree.deleted = make(map[string]bool)
+	tree.cache = make(map[string][]byte)
 
 	if tree.sql.readConn == nil {
 		if err := tree.sql.ResetShardQueries(); err != nil {
@@ -276,21 +287,38 @@ func (tree *Tree) Get(key []byte) ([]byte, error) {
 		return tree.sql.GetAt(tree.version, key)
 	}
 
-	var (
-		res []byte
-		err error
-	)
-
-	if tree.storeLatestLeaves {
-		res, err = tree.sql.GetLatestLeaf(key)
-	} else {
-		if tree.root == nil {
-			return nil, nil
-		}
-		_, res, err = tree.root.get(tree, key)
+	if val, exists := tree.cache[string(key)]; exists {
+		return val, nil
+	}
+	if _, exists := tree.deleted[string(key)]; exists {
+		return nil, nil
 	}
 
-	return res, err
+	val, err := tree.sql.GetAt(tree.version, key)
+	if err != nil {
+		return nil, err
+	}
+
+	tree.cache[string(key)] = val
+	delete(tree.deleted, string(key))
+
+	return val, nil
+
+	// var (
+	// 	res []byte
+	// 	err error
+	// )
+	//
+	// if tree.storeLatestLeaves {
+	// 	res, err = tree.sql.GetLatestLeaf(key)
+	// } else {
+	// 	if tree.root == nil {
+	// 		return nil, nil
+	// 	}
+	// 	_, res, err = tree.root.get(tree, key)
+	// }
+	//
+	// return res, err
 }
 
 func (tree *Tree) Has(key []byte) (bool, error) {
@@ -306,22 +334,36 @@ func (tree *Tree) Has(key []byte) (bool, error) {
 		return val != nil, nil
 	}
 
-	var (
-		err error
-		val []byte
-	)
-	if tree.storeLatestLeaves {
-		val, err = tree.sql.GetLatestLeaf(key)
-	} else {
-		if tree.root == nil {
-			return false, nil
-		}
-		_, val, err = tree.root.get(tree, key)
+	if val, exists := tree.cache[string(key)]; exists {
+		return val != nil, nil
 	}
+	if _, exists := tree.deleted[string(key)]; exists {
+		return false, nil
+	}
+
+	val, err := tree.sql.GetAt(tree.version, key)
 	if err != nil {
 		return false, err
 	}
+
 	return val != nil, nil
+
+	// var (
+	// 	err error
+	// 	val []byte
+	// )
+	// if tree.storeLatestLeaves {
+	// 	val, err = tree.sql.GetLatestLeaf(key)
+	// } else {
+	// 	if tree.root == nil {
+	// 		return false, nil
+	// 	}
+	// 	_, val, err = tree.root.get(tree, key)
+	// }
+	// if err != nil {
+	// 	return false, err
+	// }
+	// return val != nil, nil
 }
 
 // Set sets a key in the working tree. Nil values are invalid. The given
@@ -348,6 +390,9 @@ func (tree *Tree) Set(key, value []byte) (updated bool, err error) {
 	} else {
 		tree.metrics.IncrCounter(1, metricsNamespace, "tree_new_node")
 	}
+
+	tree.cache[string(key)] = value
+	delete(tree.deleted, string(key))
 
 	return updated, nil
 }
@@ -477,6 +522,9 @@ func (tree *Tree) Remove(key []byte) ([]byte, bool, error) {
 	if !removed {
 		return nil, false, nil
 	}
+
+	delete(tree.cache, string(key))
+	tree.deleted[string(key)] = true
 
 	tree.metrics.IncrCounter(1, metricsNamespace, "tree_delete")
 
@@ -882,6 +930,8 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 		evictionDepth:     tree.evictionDepth,
 		leafSequence:      leafSequenceStart,
 		rootHashed:        true,
+		cache:             make(map[string][]byte),
+		deleted:           make(map[string]bool),
 	}
 
 	return imTree, nil
@@ -908,6 +958,8 @@ func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
 		evictionDepth:     tree.evictionDepth,
 		leafSequence:      leafSequenceStart,
 		rootHashed:        true,
+		cache:             make(map[string][]byte),
+		deleted:           make(map[string]bool),
 	}
 
 	if err = imTree.LoadVersion(version); err != nil {
