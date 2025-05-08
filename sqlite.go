@@ -341,6 +341,14 @@ func (sql *SqliteDb) newReadConn() (*gosqlite.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = conn.Exec("PRAGMA journal_mode=WAL;")
+	if err != nil {
+		return nil, err
+	}
+	err = conn.Exec("PRAGMA synchronous=OFF;")
+	if err != nil {
+		return nil, err
+	}
 	err = conn.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", sql.opts.MmapSize))
 	if err != nil {
 		return nil, err
