@@ -415,91 +415,197 @@ func (tree *Tree) set(key []byte, value []byte) (updated bool, err error) {
 func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 	newSelf *Node, updated bool, err error,
 ) {
-	if node == nil {
-		panic("node is nil")
+	// Define a struct to track our traversal state
+	type setFrame struct {
+		node    *Node
+		key     []byte
+		value   []byte
+		goLeft  bool // Whether we should go left or right from this node
+		visited bool // Whether this node's children have been processed
 	}
-	if node.isLeaf() {
-		switch bytes.Compare(key, node.key) {
-		case -1: // setKey < leafKey
-			tree.metrics.IncrCounter(2, metricsNamespace, "pool_get")
-			parent := tree.pool.Get()
-			parent.nodeKey = tree.nextNodeKey()
-			parent.key = node.key
-			parent.subtreeHeight = 1
-			parent.size = 2
-			parent.dirty = true
-			parent.setLeft(tree.NewLeafNode(key, value))
-			parent.setRight(node)
 
-			tree.workingBytes += parent.sizeBytes()
-			tree.workingSize++
-			return parent, false, nil
-		case 1: // setKey > leafKey
-			tree.metrics.IncrCounter(2, metricsNamespace, "pool_get")
-			parent := tree.pool.Get()
-			parent.nodeKey = tree.nextNodeKey()
-			parent.key = key
-			parent.subtreeHeight = 1
-			parent.size = 2
-			parent.dirty = true
-			parent.setLeft(node)
-			parent.setRight(tree.NewLeafNode(key, value))
+	// Create stack of frames to process
+	stack := make([]setFrame, 0, 32) // Initial capacity to reduce allocations
+	stack = append(stack, setFrame{
+		node:    node,
+		key:     key,
+		value:   value,
+		goLeft:  bytes.Compare(key, node.key) < 0,
+		visited: false,
+	})
 
-			tree.workingBytes += parent.sizeBytes()
-			tree.workingSize++
-			return parent, false, nil
-		default:
-			tree.addOrphan(node)
-			wasDirty := node.dirty
-			tree.mutateNode(node)
-			if tree.isReplaying {
-				node.hash = value
-			} else {
-				if wasDirty {
-					tree.workingBytes -= node.sizeBytes()
-				}
-				node.value = value
-				node._hash()
-				if !tree.storeLeafValues {
-					node.value = nil
-				}
-				tree.workingBytes += node.sizeBytes()
-			}
-			return node, true, nil
+	// Process frames in a loop until stack is empty
+	var currentNode *Node
+	childMap := make(map[*Node]*Node) // Maps parent nodes to their processed children
+
+	for len(stack) > 0 {
+		// Get current frame from the top of stack
+		currentIndex := len(stack) - 1
+		currentFrame := &stack[currentIndex]
+		currentNode = currentFrame.node
+
+		// Handle nil node (should never happen)
+		if currentNode == nil {
+			panic("node is nil")
 		}
 
-	} else {
-		tree.addOrphan(node)
-		tree.mutateNode(node)
+		// Handle leaf nodes directly - no recursion needed
+		if currentNode.isLeaf() {
+			// Pop the frame
+			stack = stack[:currentIndex]
 
-		var child *Node
-		if bytes.Compare(key, node.key) < 0 {
-			child, updated, err = tree.recursiveSet(node.left(tree), key, value)
-			if err != nil {
-				return nil, updated, err
+			switch bytes.Compare(currentFrame.key, currentNode.key) {
+			case -1: // setKey < leafKey
+				tree.metrics.IncrCounter(2, metricsNamespace, "pool_get")
+				parent := tree.pool.Get()
+				parent.nodeKey = tree.nextNodeKey()
+				parent.key = currentNode.key
+				parent.subtreeHeight = 1
+				parent.size = 2
+				parent.dirty = true
+				parent.setLeft(tree.NewLeafNode(currentFrame.key, currentFrame.value))
+				parent.setRight(currentNode)
+
+				tree.workingBytes += parent.sizeBytes()
+				tree.workingSize++
+
+				// Store result for parent frame
+				if len(stack) > 0 {
+					parentFrame := &stack[len(stack)-1]
+					childMap[parentFrame.node] = parent
+				} else {
+					return parent, false, nil
+				}
+			case 1: // setKey > leafKey
+				tree.metrics.IncrCounter(2, metricsNamespace, "pool_get")
+				parent := tree.pool.Get()
+				parent.nodeKey = tree.nextNodeKey()
+				parent.key = currentFrame.key
+				parent.subtreeHeight = 1
+				parent.size = 2
+				parent.dirty = true
+				parent.setLeft(currentNode)
+				parent.setRight(tree.NewLeafNode(currentFrame.key, currentFrame.value))
+
+				tree.workingBytes += parent.sizeBytes()
+				tree.workingSize++
+
+				// Store result for parent frame
+				if len(stack) > 0 {
+					parentFrame := &stack[len(stack)-1]
+					childMap[parentFrame.node] = parent
+				} else {
+					return parent, false, nil
+				}
+			default: // Equal keys - update the value
+				tree.addOrphan(currentNode)
+				wasDirty := currentNode.dirty
+				tree.mutateNode(currentNode)
+				if tree.isReplaying {
+					currentNode.hash = currentFrame.value
+				} else {
+					if wasDirty {
+						tree.workingBytes -= currentNode.sizeBytes()
+					}
+					currentNode.value = currentFrame.value
+					currentNode._hash()
+					if !tree.storeLeafValues {
+						currentNode.value = nil
+					}
+					tree.workingBytes += currentNode.sizeBytes()
+				}
+
+				// Store result for parent frame
+				if len(stack) > 0 {
+					parentFrame := &stack[len(stack)-1]
+					childMap[parentFrame.node] = currentNode
+					updated = true
+				} else {
+					return currentNode, true, nil
+				}
 			}
-			node.setLeft(child)
 		} else {
-			child, updated, err = tree.recursiveSet(node.right(tree), key, value)
-			if err != nil {
-				return nil, updated, err
-			}
-			node.setRight(child)
-		}
+			// Handle internal nodes
+			if !currentFrame.visited {
+				// Mark as visited to avoid repeated work
+				currentFrame.visited = true
+				stack[currentIndex] = *currentFrame
 
-		if updated {
-			return node, updated, nil
+				// First visit: add orphan and mutate node
+				tree.addOrphan(currentNode)
+				tree.mutateNode(currentNode)
+
+				// Add frame for child node traversal
+				var childNode *Node
+				if currentFrame.goLeft {
+					childNode = currentNode.left(tree)
+				} else {
+					childNode = currentNode.right(tree)
+				}
+
+				// Push child onto stack
+				stack = append(stack, setFrame{
+					node:    childNode,
+					key:     currentFrame.key,
+					value:   currentFrame.value,
+					goLeft:  bytes.Compare(currentFrame.key, childNode.key) < 0,
+					visited: false,
+				})
+			} else {
+				// Pop frame from stack
+				stack = stack[:currentIndex]
+
+				// Get processed child node
+				childNode, exists := childMap[currentNode]
+				if !exists {
+					return nil, false, fmt.Errorf("internal error: child not found for node")
+				}
+
+				// Delete from map to prevent memory leaks
+				delete(childMap, currentNode)
+
+				// Apply the child node to the current node
+				if currentFrame.goLeft {
+					currentNode.setLeft(childNode)
+				} else {
+					currentNode.setRight(childNode)
+				}
+
+				// If the child was updated, no need for balancing
+				if updated {
+					// Store result for parent frame if not at root
+					if len(stack) > 0 {
+						parentFrame := &stack[len(stack)-1]
+						childMap[parentFrame.node] = currentNode
+					} else {
+						return currentNode, updated, nil
+					}
+				} else {
+					// Perform height/size calculation and balancing
+					err = currentNode.calcHeightAndSize(tree)
+					if err != nil {
+						return nil, false, err
+					}
+
+					newNode, err := tree.balance(currentNode)
+					if err != nil {
+						return nil, false, err
+					}
+
+					// Store result for parent frame if not at root
+					if len(stack) > 0 {
+						parentFrame := &stack[len(stack)-1]
+						childMap[parentFrame.node] = newNode
+					} else {
+						return newNode, updated, nil
+					}
+				}
+			}
 		}
-		err = node.calcHeightAndSize(tree)
-		if err != nil {
-			return nil, false, err
-		}
-		newNode, err := tree.balance(node)
-		if err != nil {
-			return nil, false, err
-		}
-		return newNode, updated, err
 	}
+
+	// We should never reach here if the algorithm is implemented correctly
+	return node, false, fmt.Errorf("unexpected exit from recursiveSet")
 }
 
 // Remove removes a key from the working tree. The given key byte slice should not be modified
