@@ -208,71 +208,90 @@ func (tree *Tree) computeHash() []byte {
 }
 
 func (tree *Tree) deepHash(node *Node, depth int8) {
-	if node == nil {
-		panic(fmt.Sprintf("node is nil; sql.path=%s", tree.sql.opts.Path))
+	type nodeWithDepth struct {
+		node    *Node
+		depth   int8
+		visited bool // Flag to track if children have been visited
 	}
 
-	if node.isLeaf() {
-		// new leaves are written every version
-		if node.nodeKey.Version() == tree.version {
-			tree.leaves = append(tree.leaves, node)
+	// Stack to replace recursion
+	stack := make([]nodeWithDepth, 0)
+	stack = append(stack, nodeWithDepth{node: node, depth: depth, visited: false})
+
+	// Process nodes in a depth-first manner using a stack
+	for len(stack) > 0 {
+		// Peek at the top node from stack
+		current := stack[len(stack)-1]
+
+		if current.node == nil {
+			panic(fmt.Sprintf("node is nil; sql.path=%s", tree.sql.opts.Path))
 		}
-		// always end recursion at a leaf
-		return
-	}
 
-	// otherwise accumulate the branch node
-	if !node.dirty || node.nodeKey.Version() != tree.version {
-		return
-	}
-	// IMPORTANT: clear cached hash
-	node.hash = nil
+		// Handle leaf nodes
+		if current.node.isLeaf() {
+			// Pop the leaf node
+			stack = stack[:len(stack)-1]
 
-	if node.hash == nil {
-		// When the child is a leaf, this will initiate a leafRead from storage for the sole purpose of producing a hash.
-		// Recall that a terminal tree node may have only updated one leaf this version.
-		// We can explore storing right/left hash in terminal tree nodes to avoid this, or changing the storage
-		// format to iavl v0 where left/right hash are stored in the node.
-		tree.deepHash(node.left(tree), depth+1)
-		tree.deepHash(node.right(tree), depth+1)
-	}
-
-	tree.branches = append(tree.branches, node)
-
-	// if the node is missing a hash then it's children have already been loaded above.
-	// if the node has a hash then traverse the dirty path.
-	// if node.hash != nil {
-	// 	if node.leftNode != nil {
-	// 		tree.deepHash(node.leftNode, depth+1)
-	// 	}
-	// 	if node.rightNode != nil {
-	// 		tree.deepHash(node.rightNode, depth+1)
-	// 	}
-	// }
-
-	node._hash()
-
-	// when heightFilter > 0 remove the leaf nodes from memory.
-	// if the leaf node is not dirty, return it to the pool.
-	// if the leaf node is dirty, it will be written to storage then removed from the pool.
-	if tree.heightFilter > 0 {
-		if node.leftNode != nil && node.leftNode.isLeaf() {
-			if !node.leftNode.dirty {
-				tree.returnNode(node.leftNode)
+			// new leaves are written every version
+			if current.node.nodeKey.Version() == tree.version {
+				tree.leaves = append(tree.leaves, current.node)
 			}
-			node.leftNode = nil
+			continue // No further processing for leaf nodes
 		}
-		if node.rightNode != nil && node.rightNode.isLeaf() {
-			if !node.rightNode.dirty {
-				tree.returnNode(node.rightNode)
-			}
-			node.rightNode = nil
-		}
-	}
 
-	// finally, remove node's children from memory if we're at the eviction height
-	if depth >= tree.evictionDepth {
-		node.evictChildren()
+		// Skip non-dirty or non-current version branch nodes
+		if !current.node.dirty || current.node.nodeKey.Version() != tree.version {
+			// Pop the node as we're skipping it
+			stack = stack[:len(stack)-1]
+			continue
+		}
+
+		// Clear cached hash if not already done
+		if !current.visited {
+			current.node.hash = nil
+
+			// Mark as visited and update in the stack
+			current.visited = true
+			stack[len(stack)-1] = current
+
+			// Push children to process first (post-order traversal)
+			// Add right then left, so left is processed first due to LIFO stack
+			rightNode := current.node.right(tree)
+			leftNode := current.node.left(tree)
+
+			stack = append(stack, nodeWithDepth{node: rightNode, depth: current.depth + 1, visited: false})
+			stack = append(stack, nodeWithDepth{node: leftNode, depth: current.depth + 1, visited: false})
+			continue
+		}
+
+		// Node is being processed after its children have been visited
+		// Pop the node
+		stack = stack[:len(stack)-1]
+
+		// Process the node
+		tree.branches = append(tree.branches, current.node)
+		current.node._hash()
+
+		// Apply height filter if enabled
+		if tree.heightFilter > 0 {
+			if current.node.leftNode != nil && current.node.leftNode.isLeaf() {
+				if !current.node.leftNode.dirty {
+					tree.returnNode(current.node.leftNode)
+				}
+				current.node.leftNode = nil
+			}
+			if current.node.rightNode != nil && current.node.rightNode.isLeaf() {
+				if !current.node.rightNode.dirty {
+					tree.returnNode(current.node.rightNode)
+				}
+				current.node.rightNode = nil
+			}
+		}
+
+		// Apply eviction if at or beyond the eviction depth
+		if current.depth >= tree.evictionDepth {
+			current.node.evictChildren()
+		}
 	}
 }
 
