@@ -294,15 +294,7 @@ func (tree *Tree) Get(key []byte) ([]byte, error) {
 		return nil, nil
 	}
 
-	val, err := tree.sql.GetAt(tree.version, key)
-	if err != nil {
-		return nil, err
-	}
-
-	tree.cache[string(key)] = val
-	delete(tree.deleted, string(key))
-
-	return val, nil
+	return tree.sql.GetAt(tree.version, key)
 
 	// var (
 	// 	res []byte
