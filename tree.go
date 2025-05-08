@@ -34,13 +34,12 @@ type Tree struct {
 	pool         *NodePool
 
 	// options
-	maxWorkingSize    uint64
-	workingBytes      uint64
-	workingSize       int64
-	storeLeafValues   bool
-	storeLatestLeaves bool
-	heightFilter      int8
-	metricsProxy      metrics.Proxy
+	maxWorkingSize  uint64
+	workingBytes    uint64
+	workingSize     int64
+	storeLeafValues bool
+	heightFilter    int8
+	metricsProxy    metrics.Proxy
 
 	// state
 	branches       []*Node
@@ -79,22 +78,21 @@ func DefaultTreeOptions() TreeOptions {
 func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 	ctx, cancel := context.WithCancel(context.Background())
 	tree := &Tree{
-		sql:               sql,
-		sqlWriter:         sql.newSQLWriter(),
-		writerCancel:      cancel,
-		pool:              pool,
-		metrics:           opts.MetricsProxy,
-		maxWorkingSize:    1.5 * 1024 * 1024 * 1024,
-		storeLeafValues:   opts.StateStorage,
-		storeLatestLeaves: false,
-		heightFilter:      opts.HeightFilter,
-		metricsProxy:      opts.MetricsProxy,
-		evictionDepth:     opts.EvictionDepth,
-		leafSequence:      leafSequenceStart,
-		immutable:         false,
-		rootHashed:        false,
-		cache:             make(map[string][]byte),
-		deleted:           make(map[string]bool),
+		sql:             sql,
+		sqlWriter:       sql.newSQLWriter(),
+		writerCancel:    cancel,
+		pool:            pool,
+		metrics:         opts.MetricsProxy,
+		maxWorkingSize:  1.5 * 1024 * 1024 * 1024,
+		storeLeafValues: opts.StateStorage,
+		heightFilter:    opts.HeightFilter,
+		metricsProxy:    opts.MetricsProxy,
+		evictionDepth:   opts.EvictionDepth,
+		leafSequence:    leafSequenceStart,
+		immutable:       false,
+		rootHashed:      false,
+		cache:           make(map[string][]byte),
+		deleted:         make(map[string]bool),
 	}
 
 	tree.sqlWriter.start(ctx)
@@ -301,14 +299,10 @@ func (tree *Tree) Get(key []byte) ([]byte, error) {
 	// 	err error
 	// )
 	//
-	// if tree.storeLatestLeaves {
-	// 	res, err = tree.sql.GetLatestLeaf(key)
-	// } else {
 	// 	if tree.root == nil {
 	// 		return nil, nil
 	// 	}
 	// 	_, res, err = tree.root.get(tree, key)
-	// }
 	//
 	// return res, err
 }
@@ -344,14 +338,10 @@ func (tree *Tree) Has(key []byte) (bool, error) {
 	// 	err error
 	// 	val []byte
 	// )
-	// if tree.storeLatestLeaves {
-	// 	val, err = tree.sql.GetLatestLeaf(key)
-	// } else {
 	// 	if tree.root == nil {
 	// 		return false, nil
 	// 	}
 	// 	_, val, err = tree.root.get(tree, key)
-	// }
 	// if err != nil {
 	// 	return false, err
 	// }
@@ -907,23 +897,22 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 	}
 
 	imTree := &Tree{
-		version:           version,
-		immutable:         true,
-		sql:               sql,
-		sqlWriter:         nil,
-		writerCancel:      nil,
-		pool:              pool,
-		metrics:           tree.metrics,
-		maxWorkingSize:    tree.maxWorkingSize,
-		storeLeafValues:   tree.storeLeafValues,
-		storeLatestLeaves: tree.storeLatestLeaves,
-		heightFilter:      tree.heightFilter,
-		metricsProxy:      tree.metricsProxy,
-		evictionDepth:     tree.evictionDepth,
-		leafSequence:      leafSequenceStart,
-		rootHashed:        true,
-		cache:             make(map[string][]byte),
-		deleted:           make(map[string]bool),
+		version:         version,
+		immutable:       true,
+		sql:             sql,
+		sqlWriter:       nil,
+		writerCancel:    nil,
+		pool:            pool,
+		metrics:         tree.metrics,
+		maxWorkingSize:  tree.maxWorkingSize,
+		storeLeafValues: tree.storeLeafValues,
+		heightFilter:    tree.heightFilter,
+		metricsProxy:    tree.metricsProxy,
+		evictionDepth:   tree.evictionDepth,
+		leafSequence:    leafSequenceStart,
+		rootHashed:      true,
+		cache:           make(map[string][]byte),
+		deleted:         make(map[string]bool),
 	}
 
 	return imTree, nil
@@ -937,21 +926,20 @@ func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
 	}
 
 	imTree := &Tree{
-		sql:               sql,
-		sqlWriter:         nil,
-		writerCancel:      nil,
-		pool:              pool,
-		metrics:           tree.metrics,
-		maxWorkingSize:    tree.maxWorkingSize,
-		storeLeafValues:   tree.storeLeafValues,
-		storeLatestLeaves: tree.storeLatestLeaves,
-		heightFilter:      tree.heightFilter,
-		metricsProxy:      tree.metricsProxy,
-		evictionDepth:     tree.evictionDepth,
-		leafSequence:      leafSequenceStart,
-		rootHashed:        true,
-		cache:             make(map[string][]byte),
-		deleted:           make(map[string]bool),
+		sql:             sql,
+		sqlWriter:       nil,
+		writerCancel:    nil,
+		pool:            pool,
+		metrics:         tree.metrics,
+		maxWorkingSize:  tree.maxWorkingSize,
+		storeLeafValues: tree.storeLeafValues,
+		heightFilter:    tree.heightFilter,
+		metricsProxy:    tree.metricsProxy,
+		evictionDepth:   tree.evictionDepth,
+		leafSequence:    leafSequenceStart,
+		rootHashed:      true,
+		cache:           make(map[string][]byte),
+		deleted:         make(map[string]bool),
 	}
 
 	if err = imTree.LoadVersion(version); err != nil {

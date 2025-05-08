@@ -313,32 +313,15 @@ func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err
 		return tree.IteratorAt(tree.version, start, end, inclusive)
 	}
 
-	if tree.storeLatestLeaves {
-		leafItr := &LeafIterator{
-			sql:     tree.sql,
-			start:   start,
-			end:     end,
-			valid:   true,
-			metrics: tree.metricsProxy,
-		}
-		// TODO: handle inclusive
-		// TODO: profile re-use of some prepared statement to see if there is improvement
-		leafItr.itrStmt, leafItr.itrIdx, err = tree.sql.getLeafIteratorQuery(start, end, true, inclusive)
-		if err != nil {
-			return nil, err
-		}
-		itr = leafItr
-	} else {
-		itr = &TreeIterator{
-			tree:      tree,
-			start:     start,
-			end:       end,
-			ascending: true,
-			inclusive: inclusive,
-			valid:     true,
-			stack:     []*Node{tree.root},
-			metrics:   tree.metricsProxy,
-		}
+	itr = &TreeIterator{
+		tree:      tree,
+		start:     start,
+		end:       end,
+		ascending: true,
+		inclusive: inclusive,
+		valid:     true,
+		stack:     []*Node{tree.root},
+		metrics:   tree.metricsProxy,
 	}
 
 	if tree.metricsProxy != nil {
@@ -353,32 +336,15 @@ func (tree *Tree) ReverseIterator(start, end []byte) (itr Iterator, err error) {
 		return tree.ReverseIteratorAt(tree.version, start, end)
 	}
 
-	if tree.storeLatestLeaves {
-		leafItr := &LeafIterator{
-			sql:     tree.sql,
-			start:   start,
-			end:     end,
-			valid:   true,
-			metrics: tree.metricsProxy,
-		}
-		// TODO: handle inclusive
-		// TODO: profile re-use of some prepared statement to see if there is improvement
-		leafItr.itrStmt, leafItr.itrIdx, err = tree.sql.getLeafIteratorQuery(start, end, false, false)
-		if err != nil {
-			return nil, err
-		}
-		itr = leafItr
-	} else {
-		itr = &TreeIterator{
-			tree:      tree,
-			start:     start,
-			end:       end,
-			ascending: false,
-			inclusive: false,
-			valid:     true,
-			stack:     []*Node{tree.root},
-			metrics:   tree.metricsProxy,
-		}
+	itr = &TreeIterator{
+		tree:      tree,
+		start:     start,
+		end:       end,
+		ascending: false,
+		inclusive: false,
+		valid:     true,
+		stack:     []*Node{tree.root},
+		metrics:   tree.metricsProxy,
 	}
 
 	if tree.metricsProxy != nil {

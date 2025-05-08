@@ -54,9 +54,8 @@ type SqliteDb struct {
 	kvIterators map[int]*gosqlite.Stmt
 
 	// for latest table queries
-	itrIdx      int
-	iterators   map[int]*gosqlite.Stmt
-	queryLatest *gosqlite.Stmt
+	itrIdx    int
+	iterators map[int]*gosqlite.Stmt
 
 	readConn  *gosqlite.Conn
 	queryLeaf *gosqlite.Stmt
@@ -480,11 +479,6 @@ func (sql *SqliteDb) Close() error {
 				return err
 			}
 		}
-		if sql.queryLatest != nil {
-			if err := sql.queryLatest.Close(); err != nil {
-				return err
-			}
-		}
 		if err := sql.readConn.Close(); err != nil {
 			return err
 		}
@@ -867,34 +861,6 @@ func (sql *SqliteDb) Revert(version int64) error {
 	//
 	// }
 	// return nil
-}
-
-func (sql *SqliteDb) GetLatestLeaf(key []byte) ([]byte, error) {
-	if sql.queryLatest == nil {
-		var err error
-		sql.queryLatest, err = sql.readConn.Prepare("SELECT value FROM changelog.latest WHERE key = ?")
-		if err != nil {
-			return nil, err
-		}
-	}
-	defer sql.queryLatest.Reset()
-
-	if err := sql.queryLatest.Bind(key); err != nil {
-		return nil, err
-	}
-	hasRow, err := sql.queryLatest.Step()
-	if err != nil {
-		return nil, err
-	}
-	if !hasRow {
-		return nil, nil
-	}
-	var val []byte
-	err = sql.queryLatest.Scan(&val)
-	if err != nil {
-		return nil, err
-	}
-	return val, nil
 }
 
 func (sql *SqliteDb) closeHangingIterators() error {

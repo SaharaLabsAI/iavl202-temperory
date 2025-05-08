@@ -23,12 +23,10 @@ type sqliteBatch struct {
 	leafCount int64
 	leafSince time.Time
 
-	leafInsert   *gosqlite.Stmt
-	latestInsert *gosqlite.Stmt
-	latestDelete *gosqlite.Stmt
-	treeInsert   *gosqlite.Stmt
-	leafOrphan   *gosqlite.Stmt
-	treeOrphan   *gosqlite.Stmt
+	leafInsert *gosqlite.Stmt
+	treeInsert *gosqlite.Stmt
+	leafOrphan *gosqlite.Stmt
+	treeOrphan *gosqlite.Stmt
 }
 
 func (b *sqliteBatch) newChangeLogBatch() (err error) {
@@ -36,14 +34,6 @@ func (b *sqliteBatch) newChangeLogBatch() (err error) {
 		return err
 	}
 	b.leafInsert, err = b.sql.leafWrite.Prepare("INSERT OR REPLACE INTO leaf (version, sequence, key, bytes) VALUES (?, ?, ?, ?)")
-	if err != nil {
-		return err
-	}
-	b.latestInsert, err = b.sql.leafWrite.Prepare("INSERT OR REPLACE INTO latest (key, value) VALUES (?, ?)")
-	if err != nil {
-		return err
-	}
-	b.latestDelete, err = b.sql.leafWrite.Prepare("DELETE FROM latest WHERE key = ?")
 	if err != nil {
 		return err
 	}
@@ -72,12 +62,6 @@ func (b *sqliteBatch) changelogBatchCommit() error {
 		return err
 	}
 	if err := b.leafInsert.Close(); err != nil {
-		return err
-	}
-	if err := b.latestInsert.Close(); err != nil {
-		return err
-	}
-	if err := b.latestDelete.Close(); err != nil {
 		return err
 	}
 	if err := b.leafOrphan.Close(); err != nil {
@@ -152,16 +136,10 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 
 	var (
 		bz   []byte
-		val  []byte
 		tree = b.tree
 	)
 	for i, leaf := range tree.leaves {
 		b.leafCount++
-		if tree.storeLatestLeaves {
-			val = leaf.value
-			leaf.value = nil
-		}
-
 		buf := bufPool.Get().(*bytes.Buffer)
 
 		err := leaf.BytesWithBuffer(buf)
@@ -175,11 +153,6 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 		}
 		bufPool.Put(buf)
 
-		if tree.storeLatestLeaves {
-			if err = b.latestInsert.Exec(leaf.key, val); err != nil {
-				return 0, err
-			}
-		}
 		if err = b.changelogMaybeCommit(); err != nil {
 			return 0, err
 		}
@@ -199,11 +172,6 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 		err = b.leafInsert.Exec(leafDelete.deleteKey.Version(), int(leafDelete.deleteKey.Sequence()), leafDelete.leafKey, nil)
 		if err != nil {
 			return 0, err
-		}
-		if tree.storeLatestLeaves {
-			if err = b.latestDelete.Exec(leafDelete.leafKey); err != nil {
-				return 0, err
-			}
 		}
 		if err = b.changelogMaybeCommit(); err != nil {
 			return 0, err
