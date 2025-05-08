@@ -998,7 +998,7 @@ func (sql *SqliteDb) replayChangelog(tree *Tree, toVersion int64, targetHash []b
 	}()
 
 	sql.opts.Logger.Info("ensure leaf_delete_index exists...", logPath...)
-	if err := sql.leafWrite.Exec("CREATE UNIQUE INDEX IF NOT EXISTS leaf_delete_idx ON leaf_delete (version DESC, sequence)"); err != nil {
+	if err := sql.leafWrite.Exec("CREATE UNIQUE INDEX IF NOT EXISTS leaf_delete_idx ON leaf_delete (version, sequence)"); err != nil {
 		return err
 	}
 	sql.opts.Logger.Info("...done", logPath...)
