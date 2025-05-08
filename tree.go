@@ -856,10 +856,6 @@ func (tree *Tree) Version() int64 {
 	return tree.version
 }
 
-func (tree *Tree) WriteLatestLeaves() (err error) {
-	return tree.sql.WriteLatestLeaves(tree)
-}
-
 func (tree *Tree) replayChangelog(toVersion int64, targetHash []byte) error {
 	return tree.sql.replayChangelog(tree, toVersion, targetHash)
 }

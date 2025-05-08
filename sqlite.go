@@ -251,7 +251,6 @@ CREATE TABLE root (
 	}
 	if !hasRow {
 		err = sql.leafWrite.Exec(`
-CREATE TABLE latest (key blob, value blob, PRIMARY KEY (key));
 CREATE TABLE leaf (version int, sequence int, key blob, bytes blob, orphaned bool);
 CREATE TABLE leaf_orphan (version int, sequence int, at int);
 CREATE INDEX leaf_orphan_idx ON leaf_orphan (at DESC);`)
@@ -708,34 +707,6 @@ func (sql *SqliteDb) WarmLeaves() error {
 		}
 	}
 
-	// TODO: remove broken latest
-
-	// if err = stmt.Close(); err != nil {
-	// 	return err
-	// }
-
-	// stmt, err = read.Prepare("SELECT key, value FROM latest")
-	// if err != nil {
-	// 	return err
-	// }
-	// for {
-	// 	ok, err := stmt.Step()
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	if !ok {
-	// 		break
-	// 	}
-	// 	cnt++
-	// 	err = stmt.Scan(&kz, &vz)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	if cnt%5_000_000 == 0 {
-	// 		sql.logger.Info(fmt.Sprintf("warmed %s leaves", humanize.Comma(cnt)))
-	// 	}
-	// }
-
 	sql.logger.Info(fmt.Sprintf("warmed %s leaves in %s", humanize.Comma(cnt), time.Since(start)))
 
 	return stmt.Close()
@@ -891,65 +862,6 @@ func (sql *SqliteDb) closeHangingIterators() error {
 	return nil
 }
 
-func (sql *SqliteDb) getLeafIteratorQuery(start, end []byte, ascending, _ bool) (stmt *gosqlite.Stmt, idx int, err error) {
-	var suffix string
-	if ascending {
-		suffix = "ASC"
-	} else {
-		suffix = "DESC"
-	}
-
-	conn, err := sql.getReadConn()
-	if err != nil {
-		return nil, idx, err
-	}
-
-	sql.itrIdx++
-	idx = sql.itrIdx
-
-	switch {
-	case start == nil && end == nil:
-		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM changelog.latest ORDER BY key %s", suffix))
-		if err != nil {
-			return nil, idx, err
-		}
-		if err = stmt.Bind(); err != nil {
-			return nil, idx, err
-		}
-	case start == nil:
-		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM changelog.latest WHERE key < ? ORDER BY key %s", suffix))
-		if err != nil {
-			return nil, idx, err
-		}
-		if err = stmt.Bind(end); err != nil {
-			return nil, idx, err
-		}
-	case end == nil:
-		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM changelog.latest WHERE key >= ? ORDER BY key %s", suffix))
-		if err != nil {
-			return nil, idx, err
-		}
-		if err = stmt.Bind(start); err != nil {
-			return nil, idx, err
-		}
-	default:
-		stmt, err = conn.Prepare(
-			fmt.Sprintf("SELECT key, value FROM changelog.latest WHERE key >= ? AND key < ? ORDER BY key %s", suffix))
-		if err != nil {
-			return nil, idx, err
-		}
-		if err = stmt.Bind(start, end); err != nil {
-			return nil, idx, err
-		}
-	}
-
-	sql.iterators[idx] = stmt
-	return stmt, idx, err
-}
-
 func (sql *SqliteDb) replayChangelog(tree *Tree, toVersion int64, targetHash []byte) error {
 	var (
 		version     int
@@ -1040,93 +952,6 @@ func (sql *SqliteDb) replayChangelog(tree *Tree, toVersion int64, targetHash []b
 	sql.opts.Logger.Info(fmt.Sprintf("replayed changelog to version=%d count=%s dur=%s root=%v",
 		tree.version, humanize.Comma(count), time.Since(start).Round(time.Millisecond), tree.root), logPath)
 	return q.Close()
-}
-
-func (sql *SqliteDb) WriteLatestLeaves(tree *Tree) (err error) {
-	var (
-		since        = time.Now()
-		batchSize    = 200_000
-		count        = 0
-		step         func(node *Node) error
-		logPath      = []string{"path", sql.opts.Path}
-		latestInsert *gosqlite.Stmt
-	)
-	prepare := func() error {
-		latestInsert, err = sql.leafWrite.Prepare("INSERT INTO latest (key, value) VALUES (?, ?)")
-		if err != nil {
-			return err
-		}
-		if err = sql.leafWrite.Begin(); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	flush := func() error {
-		if err = sql.leafWrite.Commit(); err != nil {
-			return err
-		}
-		if err = latestInsert.Close(); err != nil {
-			return err
-		}
-		var rate string
-		if time.Since(since).Seconds() > 0 {
-			rate = humanize.Comma(int64(float64(batchSize) / time.Since(since).Seconds()))
-		} else {
-			rate = "n/a"
-		}
-		sql.logger.Info(fmt.Sprintf("latest flush; count=%s dur=%s wr/s=%s",
-			humanize.Comma(int64(count)),
-			time.Since(since).Round(time.Millisecond),
-			rate,
-		), logPath)
-		since = time.Now()
-		return nil
-	}
-
-	maybeFlush := func() error {
-		count++
-		if count%batchSize == 0 {
-			err = flush()
-			if err != nil {
-				return err
-			}
-			return prepare()
-		}
-		return nil
-	}
-
-	if err = prepare(); err != nil {
-		return err
-	}
-
-	step = func(node *Node) error {
-		if node.isLeaf() {
-			err := latestInsert.Exec(node.key, node.value)
-			if err != nil {
-				return err
-			}
-			return maybeFlush()
-		}
-		if err = step(node.left(tree)); err != nil {
-			return err
-		}
-		if err = step(node.right(tree)); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	err = step(tree.root)
-	if err != nil {
-		return err
-	}
-	err = flush()
-	if err != nil {
-		return err
-	}
-
-	return latestInsert.Close()
 }
 
 func (sql *SqliteDb) Logger() Logger {
