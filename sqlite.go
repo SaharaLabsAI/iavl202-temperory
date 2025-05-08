@@ -1206,7 +1206,7 @@ LIMIT 1;`)
 	}
 	defer sql.queryKV.Reset()
 
-	if err = sql.queryKV.Bind(key, version, version); err != nil {
+	if err = sql.queryKV.Bind(key, version, key, version); err != nil {
 		return nil, err
 	}
 
