@@ -128,34 +128,32 @@ func (b *sqliteBatch) treeMaybeCommit(shardID int64) (err error) {
 
 func (b *sqliteBatch) saveLeaves() (int64, error) {
 	b.leafCount = 0
+	tree := b.tree
+
+	buf := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(buf)
 
 	err := b.newChangeLogBatch()
 	if err != nil {
 		return 0, err
 	}
 
-	var (
-		bz   []byte
-		tree = b.tree
-	)
 	for i, leaf := range tree.leaves {
 		b.leafCount++
-		buf := bufPool.Get().(*bytes.Buffer)
 
-		err := leaf.BytesWithBuffer(buf)
-		if err != nil {
+		buf.Reset()
+		if err := leaf.BytesWithBuffer(buf); err != nil {
 			return 0, err
 		}
 
-		bz = buf.Bytes()
-		if err = b.leafInsert.Exec(leaf.nodeKey.Version(), int(leaf.nodeKey.Sequence()), leaf.key, bz); err != nil {
+		if err = b.leafInsert.Exec(leaf.nodeKey.Version(), int(leaf.nodeKey.Sequence()), leaf.key, buf.Bytes()); err != nil {
 			return 0, err
 		}
-		bufPool.Put(buf)
 
 		if err = b.changelogMaybeCommit(); err != nil {
 			return 0, err
 		}
+
 		if tree.heightFilter > 0 {
 			if i != 0 {
 				// evict leaf
@@ -169,8 +167,7 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 
 	for _, leafDelete := range tree.deletes {
 		b.leafCount++
-		err = b.leafInsert.Exec(leafDelete.deleteKey.Version(), int(leafDelete.deleteKey.Sequence()), leafDelete.leafKey, nil)
-		if err != nil {
+		if err = b.leafInsert.Exec(leafDelete.deleteKey.Version(), int(leafDelete.deleteKey.Sequence()), leafDelete.leafKey, nil); err != nil {
 			return 0, err
 		}
 		if err = b.changelogMaybeCommit(); err != nil {
@@ -180,8 +177,7 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 
 	for _, orphan := range tree.leafOrphans {
 		b.leafCount++
-		err = b.leafOrphan.Exec(orphan.Version(), int(orphan.Sequence()), b.tree.version)
-		if err != nil {
+		if err = b.leafOrphan.Exec(orphan.Version(), int(orphan.Sequence()), b.tree.version); err != nil {
 			return 0, err
 		}
 		if err = b.changelogMaybeCommit(); err != nil {
@@ -217,6 +213,9 @@ func (b *sqliteBatch) saveBranches() (n int64, err error) {
 	b.logger.Debug(fmt.Sprintf("save branches db=tree version=%d shard=%d orphans=%s",
 		tree.version, shardID, humanize.Comma(int64(len(tree.branchOrphans)))))
 
+	buf := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(buf)
+
 	if err = b.newTreeBatch(shardID); err != nil {
 		return 0, err
 	}
@@ -224,22 +223,20 @@ func (b *sqliteBatch) saveBranches() (n int64, err error) {
 	for _, node := range tree.branches {
 		b.treeCount++
 
-		buf := bufPool.Get().(*bytes.Buffer)
+		buf.Reset()
 
-		err := node.BytesWithBuffer(buf)
-		if err != nil {
+		if err := node.BytesWithBuffer(buf); err != nil {
 			return 0, err
 		}
 
-		bz := buf.Bytes()
-		if err = b.treeInsert.Exec(node.nodeKey.Version(), int(node.nodeKey.Sequence()), bz); err != nil {
+		if err = b.treeInsert.Exec(node.nodeKey.Version(), int(node.nodeKey.Sequence()), buf.Bytes()); err != nil {
 			return 0, err
 		}
-		bufPool.Put(buf)
 
 		if err = b.treeMaybeCommit(shardID); err != nil {
 			return 0, err
 		}
+
 		if node.evict {
 			tree.returnNode(node)
 		}
@@ -259,6 +256,7 @@ func (b *sqliteBatch) saveBranches() (n int64, err error) {
 	if err = b.treeBatchCommit(); err != nil {
 		return 0, err
 	}
+
 	err = b.sql.treeWrite.Exec(fmt.Sprintf(
 		"CREATE INDEX IF NOT EXISTS tree_idx_%d ON tree_%d (version, sequence);", shardID, shardID))
 	if err != nil {
