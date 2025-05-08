@@ -24,7 +24,6 @@ type sqliteBatch struct {
 	leafSince time.Time
 
 	leafInsert   *gosqlite.Stmt
-	deleteInsert *gosqlite.Stmt
 	latestInsert *gosqlite.Stmt
 	latestDelete *gosqlite.Stmt
 	treeInsert   *gosqlite.Stmt
@@ -37,10 +36,6 @@ func (b *sqliteBatch) newChangeLogBatch() (err error) {
 		return err
 	}
 	b.leafInsert, err = b.sql.leafWrite.Prepare("INSERT OR REPLACE INTO leaf (version, sequence, key, bytes) VALUES (?, ?, ?, ?)")
-	if err != nil {
-		return err
-	}
-	b.deleteInsert, err = b.sql.leafWrite.Prepare("INSERT OR REPLACE INTO leaf_delete (version, sequence, key) VALUES (?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -77,9 +72,6 @@ func (b *sqliteBatch) changelogBatchCommit() error {
 		return err
 	}
 	if err := b.leafInsert.Close(); err != nil {
-		return err
-	}
-	if err := b.deleteInsert.Close(); err != nil {
 		return err
 	}
 	if err := b.latestInsert.Close(); err != nil {
@@ -204,7 +196,7 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 
 	for _, leafDelete := range tree.deletes {
 		b.leafCount++
-		err = b.deleteInsert.Exec(leafDelete.deleteKey.Version(), int(leafDelete.deleteKey.Sequence()), leafDelete.leafKey)
+		err = b.leafInsert.Exec(leafDelete.deleteKey.Version(), int(leafDelete.deleteKey.Sequence()), leafDelete.leafKey, nil)
 		if err != nil {
 			return 0, err
 		}
@@ -239,11 +231,6 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 	}
 
 	err = tree.sql.leafWrite.Exec("CREATE UNIQUE INDEX IF NOT EXISTS leaf_key_idx ON leaf (key, version DESC);")
-	if err != nil {
-		return b.leafCount, err
-	}
-
-	err = tree.sql.leafWrite.Exec("CREATE UNIQUE INDEX IF NOT EXISTS leaf_delete_idx ON leaf (version, key);")
 	if err != nil {
 		return b.leafCount, err
 	}

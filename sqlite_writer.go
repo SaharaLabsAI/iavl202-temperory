@@ -170,10 +170,6 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 			if err = commitPrune(); err != nil {
 				return err
 			}
-			err = w.sql.leafWrite.Exec("DELETE FROM leaf_delete WHERE version < ?", pruneVersion)
-			if err != nil {
-				return fmt.Errorf("failed to prune leaf_delete; %w", err)
-			}
 			w.logger.Debug(fmt.Sprintf("done leaf prune count=%s dur=%s to=%d",
 				humanize.Comma(pruneCount),
 				time.Since(pruneStartTime).Round(time.Millisecond),
