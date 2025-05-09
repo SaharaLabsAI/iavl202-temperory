@@ -227,6 +227,14 @@ CREATE TABLE root (
 		if err != nil {
 			return err
 		}
+		err = sql.treeWrite.Exec("PRAGMA temp_store=MEMORY;")
+		if err != nil {
+			return err
+		}
+		err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA temp_store_size=%d;", sql.opts.TempStoreSize))
+		if err != nil {
+			return err
+		}
 
 		sql.logger.Info(fmt.Sprintf("creating shard %d", defaultShardID))
 		err := sql.treeWrite.Exec(fmt.Sprintf("CREATE TABLE tree_%d (version int, sequence int, bytes blob, orphaned bool);", defaultShardID))
@@ -261,6 +269,14 @@ CREATE INDEX leaf_orphan_idx ON leaf_orphan (at DESC);`)
 			return err
 		}
 		err = sql.leafWrite.Exec("PRAGMA journal_mode=WAL;")
+		if err != nil {
+			return err
+		}
+		err = sql.leafWrite.Exec("PRAGMA temp_store=MEMORY;")
+		if err != nil {
+			return err
+		}
+		err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA temp_store_size=%d;", sql.opts.TempStoreSize))
 		if err != nil {
 			return err
 		}
