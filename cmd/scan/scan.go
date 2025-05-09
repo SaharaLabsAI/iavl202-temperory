@@ -23,7 +23,7 @@ func probeCommand() *cobra.Command {
 		Use:   "probe",
 		Short: "prob sqlite cgo configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			f, err := os.CreateTemp("", "iavl-v2-probe.sqlite")
+			f, err := os.CreateTemp("", "iavl2-probe.sqlite")
 			if err != nil {
 				return err
 			}

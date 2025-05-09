@@ -42,7 +42,6 @@ type Iterator interface {
 
 var (
 	_ Iterator = (*TreeIterator)(nil)
-	_ Iterator = (*LeafIterator)(nil)
 	_ Iterator = (*KVIterator)(nil)
 	_ Iterator = (*WrongBranchHashIterator)(nil)
 )
@@ -231,83 +230,6 @@ func (i *TreeIterator) Close() error {
 	return i.err
 }
 
-type LeafIterator struct {
-	sql     *SqliteDb
-	itrStmt *gosqlite.Stmt
-	start   []byte
-	end     []byte
-	valid   bool
-	err     error
-	key     []byte
-	value   []byte
-	metrics metrics.Proxy
-	itrIdx  int
-}
-
-func (l *LeafIterator) Domain() (start []byte, end []byte) {
-	return l.start, l.end
-}
-
-func (l *LeafIterator) Valid() bool {
-	return l.valid
-}
-
-func (l *LeafIterator) Next() {
-	if l.metrics != nil {
-		defer l.metrics.MeasureSince(time.Now(), "iavl_v2", "iterator", "next")
-	}
-	if !l.valid {
-		return
-	}
-
-	hasRow, err := l.itrStmt.Step()
-	if err != nil {
-		closeErr := l.Close()
-		if closeErr != nil {
-			l.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
-		}
-		return
-	}
-	if !hasRow {
-		closeErr := l.Close()
-		if closeErr != nil {
-			l.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
-		}
-		return
-	}
-	if err = l.itrStmt.Scan(&l.key, &l.value); err != nil {
-		closeErr := l.Close()
-		if closeErr != nil {
-			l.err = fmt.Errorf("error closing iterator: %w; %w", closeErr, err)
-		}
-		return
-	}
-}
-
-func (l *LeafIterator) Key() (key []byte) {
-	return l.key
-}
-
-func (l *LeafIterator) Value() (value []byte) {
-	return l.value
-}
-
-func (l *LeafIterator) Error() error {
-	return l.err
-}
-
-func (l *LeafIterator) Close() error {
-	if l.valid {
-		if l.metrics != nil {
-			l.metrics.IncrCounter(1, "iavl_v2", "iterator", "close")
-		}
-		l.valid = false
-		delete(l.sql.iterators, l.itrIdx)
-		return l.itrStmt.Close()
-	}
-	return nil
-}
-
 func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err error) {
 	if tree.immutable {
 		return tree.IteratorAt(tree.version, start, end, inclusive)
@@ -438,8 +360,7 @@ func (i *KVIterator) Close() error {
 			i.metrics.IncrCounter(1, "iavl_v2", "iterator", "close")
 		}
 		i.valid = false
-		delete(i.sql.kvIterators, i.itrIdx)
-		return i.itrStmt.Close()
+		return i.sql.readPool.CloseKVIterstor(i.itrIdx)
 	}
 	return nil
 }
@@ -648,6 +569,7 @@ func (i *WrongBranchHashIterator) Close() error {
 			i.metrics.IncrCounter(1, "iavl_v2", "iterator", "close")
 		}
 		i.valid = false
+
 		return i.itrStmt.Close()
 	}
 	return nil

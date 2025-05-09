@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"math"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -14,12 +12,12 @@ import (
 	"github.com/eatonphil/gosqlite"
 	api "github.com/kocubinski/costor-api"
 
-	encoding "github.com/cosmos/iavl/v2/internal"
 	"github.com/cosmos/iavl/v2/metrics"
 )
 
-const defaultSQLitePath = "/tmp/iavl-v2"
+const defaultSQLitePath = "/tmp/iavl2"
 const defaultShardID = 1
+const defaultMaxPoolSize = 100
 
 type SqliteDbOptions struct {
 	Path          string
@@ -30,6 +28,7 @@ type SqliteDbOptions struct {
 	ConnArgs      string
 	TempStoreSize int
 	ShardTrees    bool
+	MaxPoolSize   int
 
 	Logger  Logger
 	Metrics metrics.Proxy
@@ -47,24 +46,16 @@ type SqliteDb struct {
 	leafWrite *gosqlite.Conn
 	treeWrite *gosqlite.Conn
 
-	// Another database for version key value, because of current node serialize method, we cannot implement
-	// base on leaf database.
-	queryKV     *gosqlite.Stmt
-	kvItrIdx    int
-	kvIterators map[int]*gosqlite.Stmt
+	// Used by block producer or syncer
+	read *SqliteReadConn
 
-	// for latest table queries
-	itrIdx    int
-	iterators map[int]*gosqlite.Stmt
-
-	readConn  *gosqlite.Conn
-	queryLeaf *gosqlite.Stmt
-
-	shards       *VersionRange
-	shardQueries map[int64]*gosqlite.Stmt
+	// Separate read conn configuration from main read, typical used by rpc query
+	readPool *SqliteReadonlyConnPool
 
 	metrics metrics.Proxy
 	logger  Logger
+
+	useReadPool bool
 }
 
 func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
@@ -95,6 +86,10 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	opts.walPages = opts.WalSize / os.Getpagesize()
 
 	opts.ShardTrees = false
+
+	if opts.MaxPoolSize == 0 {
+		opts.MaxPoolSize = defaultMaxPoolSize
+	}
 
 	if opts.Logger == nil {
 		opts.Logger = NewNopLogger()
@@ -163,31 +158,34 @@ func NewInMemorySqliteDb(pool *NodePool) (*SqliteDb, error) {
 }
 
 func NewSqliteDb(pool *NodePool, opts SqliteDbOptions) (*SqliteDb, error) {
+	var err error
 	opts = defaultSqliteDbOptions(opts)
+
 	sql := &SqliteDb{
-		shards:       &VersionRange{},
-		shardQueries: make(map[int64]*gosqlite.Stmt),
-		iterators:    make(map[int]*gosqlite.Stmt),
-		kvIterators:  make(map[int]*gosqlite.Stmt),
-		opts:         opts,
-		pool:         pool,
-		metrics:      opts.Metrics,
-		logger:       opts.Logger,
+		opts:    opts,
+		pool:    pool,
+		metrics: opts.Metrics,
+		logger:  opts.Logger,
 	}
 
 	if !api.IsFileExistent(opts.Path) {
-		err := os.MkdirAll(opts.Path, 0755)
+		err = os.MkdirAll(opts.Path, 0755)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if err := sql.resetWriteConn(); err != nil {
+	if err = sql.resetWriteConn(); err != nil {
 		return nil, err
 	}
 
-	if err := sql.init(); err != nil {
+	if err = sql.init(); err != nil {
 		return nil, err
+	}
+
+	sql.readPool, err = NewSqliteReadonlyConnPool(&opts, opts.MaxPoolSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize read connection pool: %w", err)
 	}
 
 	return sql, nil
@@ -232,11 +230,6 @@ CREATE TABLE root (
 
 		sql.logger.Info(fmt.Sprintf("creating shard %d", defaultShardID))
 		err := sql.treeWrite.Exec(fmt.Sprintf("CREATE TABLE tree_%d (version int, sequence int, bytes blob, orphaned bool);", defaultShardID))
-		if err != nil {
-			return err
-		}
-
-		err = sql.shards.Add(defaultShardID)
 		if err != nil {
 			return err
 		}
@@ -319,7 +312,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	return err
 }
 
-func (sql *SqliteDb) newReadConn() (*gosqlite.Conn, error) {
+func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 	var (
 		conn *gosqlite.Conn
 		err  error
@@ -364,129 +357,80 @@ func (sql *SqliteDb) newReadConn() (*gosqlite.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return conn, nil
+
+	c := NewSqliteReadConn(conn, &sql.opts, sql.logger)
+
+	return c, nil
 }
 
 func (sql *SqliteDb) resetReadConn() (err error) {
-	if sql.readConn != nil {
-		err = sql.readConn.Close()
+	if sql.read != nil {
+		err = sql.read.Close()
 		if err != nil {
 			return err
 		}
 	}
-	sql.readConn, err = sql.newReadConn()
+	sql.read, err = sql.newReadConn()
 	return err
 }
 
-func (sql *SqliteDb) getReadConn() (*gosqlite.Conn, error) {
-	var err error
-	if sql.readConn == nil {
-		sql.readConn, err = sql.newReadConn()
+func (sql *SqliteDb) getReadConn() (*SqliteReadConn, error) {
+	if sql.useReadPool {
+		return sql.readPool.GetConn()
 	}
-	return sql.readConn, err
+
+	var err error
+	if sql.read == nil {
+		sql.read, err = sql.newReadConn()
+	}
+
+	return sql.read, err
 }
 
 func (sql *SqliteDb) getLeaf(nodeKey NodeKey) (*Node, error) {
+	// Fallback to old method for backward compatibility
 	start := time.Now()
 	defer func() {
 		sql.metrics.MeasureSince(start, metricsNamespace, "db_get")
 		sql.metrics.IncrCounter(1, metricsNamespace, "db_get_leaf")
 	}()
-	var err error
-	if sql.queryLeaf == nil {
-		sql.queryLeaf, err = sql.readConn.Prepare("SELECT bytes FROM changelog.leaf WHERE version = ? AND sequence = ?")
-		if err != nil {
-			return nil, err
-		}
-	}
-	if err = sql.queryLeaf.Bind(nodeKey.Version(), int(nodeKey.Sequence())); err != nil {
-		return nil, err
-	}
-	hasRow, err := sql.queryLeaf.Step()
-	if !hasRow {
-		return nil, sql.queryLeaf.Reset()
-	}
-	if err != nil {
-		return nil, err
-	}
-	var nodeBz gosqlite.RawBytes
-	err = sql.queryLeaf.Scan(&nodeBz)
-	if err != nil {
-		return nil, err
-	}
-	node, err := MakeNode(sql.pool, nodeKey, nodeBz)
-	if err != nil {
-		return nil, err
-	}
-	err = sql.queryLeaf.Reset()
+
+	conn, err := sql.getReadConn()
 	if err != nil {
 		return nil, err
 	}
 
-	return node, nil
+	return conn.getLeaf(sql.pool, nodeKey)
 }
 
 func (sql *SqliteDb) getNode(nodeKey NodeKey) (*Node, error) {
 	start := time.Now()
-	q, err := sql.getShardQuery(nodeKey.Version())
-	if err != nil {
-		return nil, err
-	}
 	defer func() {
 		sql.metrics.MeasureSince(start, metricsNamespace, "db_get")
 		sql.metrics.IncrCounter(1, metricsNamespace, "db_get_branch")
 	}()
 
-	if err := q.Reset(); err != nil {
-		return nil, err
-	}
-	if err := q.Bind(nodeKey.Version(), int(nodeKey.Sequence())); err != nil {
-		return nil, err
-	}
-	hasRow, err := q.Step()
-	if !hasRow {
-		return nil, fmt.Errorf("node not found: %v; shard=%d; path=%s",
-			nodeKey, sql.shards.Find(nodeKey.Version()), sql.opts.Path)
-	}
-	if err != nil {
-		return nil, err
-	}
-	var nodeBz gosqlite.RawBytes
-	err = q.Scan(&nodeBz)
-	if err != nil {
-		return nil, err
-	}
-	node, err := MakeNode(sql.pool, nodeKey, nodeBz)
-	if err != nil {
-		return nil, err
-	}
-	err = q.Reset()
+	conn, err := sql.getReadConn()
 	if err != nil {
 		return nil, err
 	}
 
-	return node, nil
+	return conn.getNode(sql.pool, nodeKey)
 }
 
 func (sql *SqliteDb) Close() error {
-	for _, q := range sql.shardQueries {
-		err := q.Close()
-		if err != nil {
+	if err := sql.closeHangingIterators(); err != nil {
+		return err
+	}
+
+	if sql.readPool != nil {
+		if err := sql.readPool.Close(); err != nil {
 			return err
 		}
 	}
-	if sql.readConn != nil {
-		if sql.queryLeaf != nil {
-			if err := sql.queryLeaf.Close(); err != nil {
-				return err
-			}
-		}
-		if sql.queryKV != nil {
-			if err := sql.queryKV.Close(); err != nil {
-				return err
-			}
-		}
-		if err := sql.readConn.Close(); err != nil {
+
+	if sql.read != nil {
+		if err := sql.read.Close(); err != nil {
 			return err
 		}
 	}
@@ -610,81 +554,48 @@ func (sql *SqliteDb) getShard(_ int64) (int64, error) {
 	// return v, nil
 }
 
-func (sql *SqliteDb) getShardQuery(version int64) (*gosqlite.Stmt, error) {
-	v, err := sql.getShard(version)
-	if err != nil {
-		return nil, err
-	}
-
-	if q, ok := sql.shardQueries[v]; ok {
-		return q, nil
-	}
-	sqlQuery := fmt.Sprintf("SELECT bytes FROM tree_%d WHERE version = ? AND sequence = ?", v)
-	q, err := sql.readConn.Prepare(sqlQuery)
-	if err != nil {
-		return nil, err
-	}
-	sql.shardQueries[v] = q
-	sql.logger.Debug(fmt.Sprintf("added shard query: %s", sqlQuery))
-	return q, nil
-}
-
 func (sql *SqliteDb) ResetShardQueries() error {
-	for k, q := range sql.shardQueries {
-		err := q.Close()
-		if err != nil {
-			return err
-		}
-		delete(sql.shardQueries, k)
-	}
-
-	sql.shards = &VersionRange{}
-
-	if sql.readConn == nil {
-		if err := sql.resetReadConn(); err != nil {
+	if sql.read != nil {
+		if err := sql.read.ResetShardQueries(); err != nil {
 			return err
 		}
 	}
 
-	q, err := sql.treeWrite.Prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'tree_%'")
-	if err != nil {
-		return err
-	}
-	for {
-		hasRow, err := q.Step()
-		if err != nil {
-			return err
-		}
-		if !hasRow {
-			break
-		}
-		var shard string
-		err = q.Scan(&shard)
-		if err != nil {
-			return err
-		}
-		shardVersion, err := strconv.Atoi(shard[5:])
-		if err != nil {
-			return err
-		}
-		if err = sql.shards.Add(int64(shardVersion)); err != nil {
-			return fmt.Errorf("failed to add shard path=%s: %w", sql.opts.Path, err)
-		}
+	if sql.readPool != nil {
+		return sql.readPool.ResetShardQueries()
 	}
 
-	return q.Close()
+	return nil
 }
 
 func (sql *SqliteDb) WarmLeaves() error {
 	start := time.Now()
-	read, err := sql.getReadConn()
+
+	var stmt *gosqlite.Stmt
+	var err error
+
+	// Use the connection pool if available
+	if sql.readPool != nil {
+		conn, err := sql.readPool.GetConn()
+		if err != nil {
+			return err
+		}
+		defer sql.readPool.ReleaseConn(conn)
+
+		stmt, err = conn.conn.Prepare("SELECT version, sequence, key, bytes FROM changelog.leaf")
+	} else {
+		read, err := sql.getReadConn()
+		if err != nil {
+			return err
+		}
+
+		stmt, err = read.Prepare("SELECT version, sequence, key, bytes FROM leaf")
+	}
+
 	if err != nil {
 		return err
 	}
-	stmt, err := read.Prepare("SELECT version, sequence, key, bytes FROM leaf")
-	if err != nil {
-		return err
-	}
+
 	var (
 		cnt, version, seq int64
 		kz, vz            []byte
@@ -843,23 +754,7 @@ func (sql *SqliteDb) Revert(version int64) error {
 }
 
 func (sql *SqliteDb) closeHangingIterators() error {
-	for idx, stmt := range sql.iterators {
-		sql.logger.Warn(fmt.Sprintf("closing hanging iterator idx=%d", idx))
-		if err := stmt.Close(); err != nil {
-			return err
-		}
-		delete(sql.iterators, idx)
-	}
-	for idx, stmt := range sql.kvIterators {
-		sql.logger.Warn(fmt.Sprintf("closing hanging iterator idx=%d", idx))
-		if err := stmt.Close(); err != nil {
-			return err
-		}
-		delete(sql.kvIterators, idx)
-	}
-	sql.itrIdx = 0
-	sql.kvItrIdx = 0
-	return nil
+	return sql.readPool.CloseHangingIterators()
 }
 
 func (sql *SqliteDb) replayChangelog(tree *Tree, toVersion int64, targetHash []byte) error {
@@ -880,21 +775,46 @@ func (sql *SqliteDb) replayChangelog(tree *Tree, toVersion int64, targetHash []b
 	}()
 
 	sql.opts.Logger.Info(fmt.Sprintf("replaying changelog from=%d to=%d", tree.version, toVersion), logPath...)
-	conn, err := sql.getReadConn()
+
+	var q *gosqlite.Stmt
+	var conn *SqliteReadConn
+	var poolConn *SqliteReadConn
+	var err error
+
+	// Use the connection pool if available
+	if sql.readPool != nil {
+		poolConn, err = sql.readPool.GetConn()
+		if err != nil {
+			return err
+		}
+		defer sql.readPool.ReleaseConn(poolConn)
+
+		q, err = poolConn.conn.Prepare(`SELECT * FROM (
+			SELECT version, sequence, key, bytes
+		FROM changelog.leaf WHERE version > ? AND version <= ?
+		) as ops
+		ORDER BY version, sequence`)
+	} else {
+		conn, err = sql.getReadConn()
+		if err != nil {
+			return err
+		}
+
+		q, err = conn.Prepare(`SELECT * FROM (
+			SELECT version, sequence, key, bytes
+		FROM leaf WHERE version > ? AND version <= ?
+		) as ops
+		ORDER BY version, sequence`)
+	}
+
 	if err != nil {
 		return err
 	}
-	q, err := conn.Prepare(`SELECT * FROM (
-		SELECT version, sequence, key, bytes
-	FROM leaf WHERE version > ? AND version <= ?
-	) as ops
-	ORDER BY version, sequence`)
-	if err != nil {
+
+	if err = q.Bind(tree.version, toVersion); err != nil {
 		return err
 	}
-	if err = q.Bind(tree.version, toVersion, tree.version, toVersion); err != nil {
-		return err
-	}
+
 	for {
 		ok, err := q.Step()
 		if err != nil {
@@ -972,103 +892,7 @@ func (sql *SqliteDb) GetAt(version int64, key []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	if sql.queryKV == nil {
-		sql.queryKV, err = conn.Prepare("SELECT bytes FROM changelog.leaf WHERE key = ? AND version <= ? ORDER BY version DESC LIMIT 1")
-		if err != nil {
-			return nil, err
-		}
-	}
-	defer sql.queryKV.Reset()
-
-	if err = sql.queryKV.Bind(key, version); err != nil {
-		return nil, err
-	}
-
-	hasRow, err := sql.queryKV.Step()
-	if err != nil {
-		return nil, err
-	}
-	if !hasRow {
-		return nil, nil
-	}
-
-	var nodeBz gosqlite.RawBytes
-	err = sql.queryKV.Scan(&nodeBz)
-	if err != nil {
-		return nil, err
-	}
-
-	if nodeBz == nil {
-		return nil, nil
-	}
-
-	return extractValue(nodeBz)
-}
-
-func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascending, inclusive bool) (stmt *gosqlite.Stmt, idx int, err error) {
-	var suffix string
-	if ascending {
-		suffix = "ASC"
-	} else {
-		suffix = "DESC"
-	}
-
-	conn, err := sql.getReadConn()
-	if err != nil {
-		return nil, idx, err
-	}
-
-	sql.kvItrIdx++
-	idx = sql.kvItrIdx
-
-	endKey := "key < ?"
-	if inclusive {
-		endKey = "key <= ?"
-	}
-
-	switch {
-	case start == nil && end == nil:
-		stmt, err = conn.Prepare(
-			fmt.Sprintf(`SELECT key, bytes FROM ( SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE bytes IS NOT NULL AND version <= ? ORDER BY key %s) WHERE rn = 1;`, suffix))
-		// `, suffix))
-		if err != nil {
-			return nil, idx, err
-		}
-		if err = stmt.Bind(version); err != nil {
-			return nil, idx, err
-		}
-	case start == nil:
-		stmt, err = conn.Prepare(
-			fmt.Sprintf(`SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE bytes IS NOT NULL AND version <= ? AND %s ORDER BY key %s) WHERE rn = 1;`, endKey, suffix))
-		if err != nil {
-			return nil, idx, err
-		}
-		if err = stmt.Bind(version, end); err != nil {
-			return nil, idx, err
-		}
-	case end == nil:
-		stmt, err = conn.Prepare(
-			fmt.Sprintf(`SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE bytes IS NOT NULL AND version <= ? AND key >= ? ORDER BY key %s) WHERE rn = 1;`, suffix))
-		if err != nil {
-			return nil, idx, err
-		}
-		if err = stmt.Bind(version, start); err != nil {
-			return nil, idx, err
-		}
-	default:
-		stmt, err = conn.Prepare(
-			fmt.Sprintf(`SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE bytes IS NOT NULL AND version <= ? AND key >= ? AND %s ORDER BY key %s) WHERE rn = 1;`, endKey, suffix))
-		if err != nil {
-			return nil, idx, err
-		}
-		if err = stmt.Bind(version, start, end); err != nil {
-			return nil, idx, err
-		}
-	}
-
-	sql.kvIterators[idx] = stmt
-
-	return stmt, idx, err
+	return conn.getVersioned(version, key)
 }
 
 func (sql *SqliteDb) HasRoot(version int64) (bool, error) {
@@ -1136,76 +960,8 @@ func (sql *SqliteDb) latestRoot() (version int64, err error) {
 	return version, nil
 }
 
-func extractValue(buf []byte) ([]byte, error) {
-	// Read node header (height, size, version, key).
-	height, n, err := encoding.DecodeVarint(buf)
-	if err != nil {
-		return nil, fmt.Errorf("decoding leaf.height, %w", err)
-	}
-	buf = buf[n:]
-	if height < int64(math.MinInt8) || height > int64(math.MaxInt8) {
-		return nil, errors.New("invalid height, must be int8")
-	}
-
-	_, n, err = encoding.DecodeVarint(buf)
-	if err != nil {
-		return nil, fmt.Errorf("decoding leaf.size, %w", err)
-	}
-	buf = buf[n:]
-
-	// Decoding leaf.key
-	s, n, err := encoding.DecodeUvarint(buf)
-	if err != nil {
-		return nil, fmt.Errorf("decoding leaf.key, %w", err)
-	}
-
-	// Make sure size doesn't overflow. ^uint(0) >> 1 will help determine the
-	// max int value variably on 32-bit and 64-bit machines. We also doublecheck
-	// that size is positive.
-	size := int(s)
-	if s >= uint64(^uint(0)>>1) || size < 0 {
-		return nil, fmt.Errorf("decoding leaf.key, invalid out of range length %v decoding []byte", s)
-	}
-	// Make sure end index doesn't overflow. We know n>0 from decodeUvarint().
-	end := n + size
-	if end < n {
-		return nil, fmt.Errorf("decoding leaf.key, invalid out of range length %v decoding []byte", size)
-	}
-	// Make sure the end index is within bounds.
-	if len(buf) < end {
-		return nil, fmt.Errorf("decoding leaf.key, insufficient bytes decoding []byte of length %v", size)
-	}
-	buf = buf[end:]
-
-	// Decoding leaf.hash
-	s, n, err = encoding.DecodeUvarint(buf)
-	if err != nil {
-		return nil, err
-	}
-	// Make sure size doesn't overflow. ^uint(0) >> 1 will help determine the
-	// max int value variably on 32-bit and 64-bit machines. We also doublecheck
-	// that size is positive.
-	size = int(s)
-	if s >= uint64(^uint(0)>>1) || size < 0 {
-		return nil, fmt.Errorf("decoding leaf.hash, invalid out of range length %v decoding []byte", s)
-	}
-	// Make sure end index doesn't overflow. We know n>0 from decodeUvarint().
-	end = n + size
-	if end < n {
-		return nil, fmt.Errorf("decoding leaf.hash, invalid out of range length %v decoding []byte", size)
-	}
-	// Make sure the end index is within bounds.
-	if len(buf) < end {
-		return nil, fmt.Errorf("decoding leaf.hash, insufficient bytes decoding []byte of length %v", size)
-	}
-	buf = buf[end:]
-
-	val, _, cause := encoding.DecodeBytes(buf)
-	if cause != nil {
-		return nil, fmt.Errorf("decoding leaf.value, %w", cause)
-	}
-
-	return val, nil
+func (sql *SqliteDb) getKVIteratorQuery(version int64, start, end []byte, ascending, inclusive bool) (stmt *gosqlite.Stmt, idx int, err error) {
+	return sql.readPool.GetKVIteratorQuery(version, start, end, ascending, inclusive)
 }
 
 func (sql *SqliteDb) getHeightOneBranchesIteratorQuery(start, end int64) (stmt *gosqlite.Stmt, err error) {
@@ -1219,6 +975,7 @@ func (sql *SqliteDb) getHeightOneBranchesIteratorQuery(start, end int64) (stmt *
 	if err != nil {
 		return nil, err
 	}
+
 	if err = stmt.Bind(start, end); err != nil {
 		return nil, err
 	}

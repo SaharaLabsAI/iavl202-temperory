@@ -590,3 +590,75 @@ func NewImportNode(key, value []byte, version int64, height int8) *Node {
 		subtreeHeight: height,
 	}
 }
+
+func extractValue(buf []byte) ([]byte, error) {
+	// Read node header (height, size, version, key).
+	height, n, err := encoding.DecodeVarint(buf)
+	if err != nil {
+		return nil, fmt.Errorf("decoding leaf.height, %w", err)
+	}
+	buf = buf[n:]
+	if height < int64(math.MinInt8) || height > int64(math.MaxInt8) {
+		return nil, errors.New("invalid height, must be int8")
+	}
+
+	_, n, err = encoding.DecodeVarint(buf)
+	if err != nil {
+		return nil, fmt.Errorf("decoding leaf.size, %w", err)
+	}
+	buf = buf[n:]
+
+	// Decoding leaf.key
+	s, n, err := encoding.DecodeUvarint(buf)
+	if err != nil {
+		return nil, fmt.Errorf("decoding leaf.key, %w", err)
+	}
+
+	// Make sure size doesn't overflow. ^uint(0) >> 1 will help determine the
+	// max int value variably on 32-bit and 64-bit machines. We also doublecheck
+	// that size is positive.
+	size := int(s)
+	if s >= uint64(^uint(0)>>1) || size < 0 {
+		return nil, fmt.Errorf("decoding leaf.key, invalid out of range length %v decoding []byte", s)
+	}
+	// Make sure end index doesn't overflow. We know n>0 from decodeUvarint().
+	end := n + size
+	if end < n {
+		return nil, fmt.Errorf("decoding leaf.key, invalid out of range length %v decoding []byte", size)
+	}
+	// Make sure the end index is within bounds.
+	if len(buf) < end {
+		return nil, fmt.Errorf("decoding leaf.key, insufficient bytes decoding []byte of length %v", size)
+	}
+	buf = buf[end:]
+
+	// Decoding leaf.hash
+	s, n, err = encoding.DecodeUvarint(buf)
+	if err != nil {
+		return nil, err
+	}
+	// Make sure size doesn't overflow. ^uint(0) >> 1 will help determine the
+	// max int value variably on 32-bit and 64-bit machines. We also doublecheck
+	// that size is positive.
+	size = int(s)
+	if s >= uint64(^uint(0)>>1) || size < 0 {
+		return nil, fmt.Errorf("decoding leaf.hash, invalid out of range length %v decoding []byte", s)
+	}
+	// Make sure end index doesn't overflow. We know n>0 from decodeUvarint().
+	end = n + size
+	if end < n {
+		return nil, fmt.Errorf("decoding leaf.hash, invalid out of range length %v decoding []byte", size)
+	}
+	// Make sure the end index is within bounds.
+	if len(buf) < end {
+		return nil, fmt.Errorf("decoding leaf.hash, insufficient bytes decoding []byte of length %v", size)
+	}
+	buf = buf[end:]
+
+	val, _, cause := encoding.DecodeBytes(buf)
+	if cause != nil {
+		return nil, fmt.Errorf("decoding leaf.value, %w", cause)
+	}
+
+	return val, nil
+}

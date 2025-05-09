@@ -77,6 +77,10 @@ func DefaultTreeOptions() TreeOptions {
 
 func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 	ctx, cancel := context.WithCancel(context.Background())
+	if sql != nil {
+		sql.useReadPool = false
+	}
+
 	tree := &Tree{
 		sql:             sql,
 		sqlWriter:       sql.newSQLWriter(),
@@ -96,6 +100,7 @@ func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 	}
 
 	tree.sqlWriter.start(ctx)
+
 	return tree
 }
 
@@ -177,10 +182,8 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.deleted = make(map[string]bool)
 	tree.cache = make(map[string][]byte)
 
-	if tree.sql.readConn == nil {
-		if err := tree.sql.ResetShardQueries(); err != nil {
-			return nil, tree.version, err
-		}
+	if err := tree.sql.ResetShardQueries(); err != nil {
+		return nil, tree.version, err
 	}
 
 	tree.leafOrphans = nil
@@ -1003,12 +1006,6 @@ func (tree *Tree) WorkingHash() []byte {
 }
 
 func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
-	pool := NewNodePool()
-	sql, err := NewSqliteDb(pool, tree.sql.opts)
-	if err != nil {
-		return nil, err
-	}
-
 	exists, err := tree.sql.HasRoot(version)
 	if err != nil {
 		return nil, err
@@ -1017,13 +1014,22 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 		return nil, fmt.Errorf("root not found for version %d", version)
 	}
 
+	sql := &SqliteDb{
+		opts:        tree.sql.opts,
+		pool:        tree.sql.pool,
+		readPool:    tree.sql.readPool,
+		metrics:     tree.sql.metrics,
+		logger:      tree.sql.logger,
+		useReadPool: true,
+	}
+
 	imTree := &Tree{
 		version:         version,
 		immutable:       true,
 		sql:             sql,
 		sqlWriter:       nil,
 		writerCancel:    nil,
-		pool:            pool,
+		pool:            tree.sql.pool,
 		metrics:         tree.metrics,
 		maxWorkingSize:  tree.maxWorkingSize,
 		storeLeafValues: tree.storeLeafValues,
@@ -1040,17 +1046,20 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 }
 
 func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
-	pool := NewNodePool()
-	sql, err := NewSqliteDb(pool, tree.sql.opts)
-	if err != nil {
-		return nil, err
+	sql := &SqliteDb{
+		opts:        tree.sql.opts,
+		pool:        tree.sql.pool,
+		readPool:    tree.sql.readPool,
+		metrics:     tree.sql.metrics,
+		logger:      tree.sql.logger,
+		useReadPool: true,
 	}
 
 	imTree := &Tree{
 		sql:             sql,
 		sqlWriter:       nil,
 		writerCancel:    nil,
-		pool:            pool,
+		pool:            tree.sql.pool,
 		metrics:         tree.metrics,
 		maxWorkingSize:  tree.maxWorkingSize,
 		storeLeafValues: tree.storeLeafValues,
@@ -1063,7 +1072,7 @@ func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
 		deleted:         make(map[string]bool),
 	}
 
-	if err = imTree.LoadVersion(version); err != nil {
+	if err := imTree.LoadVersion(version); err != nil {
 		return nil, err
 	}
 

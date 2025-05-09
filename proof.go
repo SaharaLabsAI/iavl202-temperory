@@ -26,13 +26,6 @@ func (tree *Tree) GetProof(version int64, key []byte) (proof *ics23.CommitmentPr
 		return nil, err
 	}
 
-	defer func() {
-		dErr := t.sql.Close()
-		if dErr != nil {
-			err = errors.Join(err, dErr)
-		}
-	}()
-
 	return t.getProof(key)
 }
 

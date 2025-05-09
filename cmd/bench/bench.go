@@ -39,11 +39,11 @@ func benchCommand() *cobra.Command {
 		Short: "run the std development benchmark",
 		Long: `Runs a longer benchmark for the IAVL tree. This is useful for development and testing.
 Pre-requisites this command:
-$ go run ./cmd gen tree --db /tmp/iavl-v2 --limit 1 --type osmo-like-many
+$ go run ./cmd gen tree --db /tmp/iavl2 --limit 1 --type osmo-like-many
 mkdir -p /tmp/osmo-like-many/v2 && go run ./cmd gen emit --start 2 --limit 1000 --type osmo-like-many --out /tmp/osmo-like-many/v2
 
 Optional for --snapshot arg:
-$ go run ./cmd snapshot --db /tmp/iavl-v2 --version 1
+$ go run ./cmd snapshot --db /tmp/iavl2 --version 1
 `,
 
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -102,7 +102,7 @@ $ go run ./cmd snapshot --db /tmp/iavl-v2 --version 1
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "/tmp/iavl-v2", "the path to the database at version 1")
+	cmd.Flags().StringVar(&dbPath, "db", "/tmp/iavl2", "the path to the database at version 1")
 	cmd.Flags().StringVar(&changelogPath, "changelog", "/tmp/osmo-like-many/v2", "the path to the changelog")
 	cmd.Flags().BoolVar(&loadSnapshot, "snapshot", false, "load the snapshot at version 1 before running the benchmarks (loads full tree into memory)")
 	cmd.Flags().BoolVar(&usePrometheus, "prometheus", false, "enable prometheus metrics")
