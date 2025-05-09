@@ -649,89 +649,214 @@ func (tree *Tree) Remove(key []byte) ([]byte, bool, error) {
 // - new leftmost leaf key for tree after successfully removing 'key' if changed.
 // - the removed value
 func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey []byte, newValue []byte, removed bool, err error) {
-	if node.isLeaf() {
-		if bytes.Equal(key, node.key) {
-			// we don't create an orphan here because the leaf node is removed
-			tree.addDelete(node)
-			tree.returnNode(node)
-			return nil, nil, node.value, true, nil
+	// Define a struct to track our traversal state
+	type removeFrame struct {
+		node    *Node
+		key     []byte
+		visited bool // Whether this node's children have been processed
+		goLeft  bool // Whether we go left or right from this node
+	}
+
+	// Create stack of frames to process
+	stack := make([]removeFrame, 0, 32) // Initial capacity to reduce allocations
+	stack = append(stack, removeFrame{
+		node:    node,
+		key:     key,
+		visited: false,
+		goLeft:  bytes.Compare(key, node.key) < 0,
+	})
+
+	// Maps parent nodes to their processed children and results
+	type resultInfo struct {
+		node       *Node  // The new node replacing the old one
+		newKey     []byte // New key (if any)
+		value      []byte // Value removed (if any)
+		wasRemoved bool   // Whether a removal occurred in this subtree
+	}
+	resultMap := make(map[*Node]resultInfo)
+
+	// Process frames until the stack is empty
+	for len(stack) > 0 {
+		// Get current frame from the top of stack
+		currentIndex := len(stack) - 1
+		currentFrame := &stack[currentIndex]
+		currentNode := currentFrame.node
+
+		// Handle leaf nodes directly
+		if currentNode.isLeaf() {
+			// Pop the frame
+			stack = stack[:currentIndex]
+
+			var result resultInfo
+
+			// Check if this is the leaf we're looking for
+			if bytes.Equal(currentFrame.key, currentNode.key) {
+				// Found the node to remove
+				tree.addDelete(currentNode)
+				tree.returnNode(currentNode)
+
+				result = resultInfo{
+					node:       nil,
+					newKey:     nil,
+					value:      currentNode.value,
+					wasRemoved: true,
+				}
+			} else {
+				// This leaf doesn't match the key, keep it
+				result = resultInfo{
+					node:       currentNode,
+					newKey:     nil,
+					value:      nil,
+					wasRemoved: false,
+				}
+			}
+
+			// Store result for parent frame
+			if len(stack) > 0 {
+				parentFrame := &stack[len(stack)-1]
+				resultMap[parentFrame.node] = result
+			} else {
+				// We're at the root
+				return result.node, result.newKey, result.value, result.wasRemoved, nil
+			}
+			continue
 		}
-		return node, nil, nil, false, nil
-	}
 
-	// node.key < key; we go to the left to find the key:
-	if bytes.Compare(key, node.key) < 0 {
-		newLeftNode, newKey, value, removed, err := tree.recursiveRemove(node.left(tree), key)
-		if err != nil {
-			return nil, nil, nil, false, err
+		// Handle internal nodes
+		if !currentFrame.visited {
+			// Mark as visited for the next iteration
+			currentFrame.visited = true
+			stack[currentIndex] = *currentFrame
+
+			// Visit the appropriate child node based on key comparison
+			var childNode *Node
+			if currentFrame.goLeft {
+				childNode = currentNode.left(tree)
+			} else {
+				childNode = currentNode.right(tree)
+			}
+
+			// Add child to the stack
+			stack = append(stack, removeFrame{
+				node:    childNode,
+				key:     currentFrame.key,
+				visited: false,
+				goLeft:  bytes.Compare(currentFrame.key, childNode.key) < 0,
+			})
+		} else {
+			// Pop the frame since we've processed its children
+			stack = stack[:currentIndex]
+
+			// Get the result from the processed child
+			childResult, exists := resultMap[currentNode]
+			if !exists {
+				return nil, nil, nil, false, fmt.Errorf("internal error: child result not found")
+			}
+
+			// Clean up the result map to prevent memory leaks
+			delete(resultMap, currentNode)
+
+			// If nothing was removed in the subtree, just pass it up
+			if !childResult.wasRemoved {
+				if len(stack) > 0 {
+					parentFrame := &stack[len(stack)-1]
+					resultMap[parentFrame.node] = childResult
+				} else {
+					// We're at the root
+					return childResult.node, childResult.newKey, childResult.value, childResult.wasRemoved, nil
+				}
+				continue
+			}
+
+			// We need to update the current node based on the removal result
+			tree.addOrphan(currentNode)
+
+			var resultNode *Node
+			var resultKey []byte
+
+			if currentFrame.goLeft {
+				// Left child was affected
+				if childResult.node == nil {
+					// Left node held value, was removed
+					// Collapse `node.rightNode` into `node`
+					rightNode := currentNode.right(tree)
+					resultKey = currentNode.key // Important: pass the current node's key up
+					tree.returnNode(currentNode)
+					resultNode = rightNode
+				} else {
+					// Left subtree changed but node wasn't removed
+					tree.mutateNode(currentNode)
+					currentNode.setLeft(childResult.node)
+
+					// Update node's height and size
+					err := currentNode.calcHeightAndSize(tree)
+					if err != nil {
+						return nil, nil, nil, false, err
+					}
+
+					// Balance the node
+					resultNode, err = tree.balance(currentNode)
+					if err != nil {
+						return nil, nil, nil, false, err
+					}
+
+					// Important: propagate the new key if there is one from child
+					resultKey = childResult.newKey
+				}
+			} else {
+				// Right child was affected
+				if childResult.node == nil {
+					// Right node held value, was removed
+					// Collapse `node.leftNode` into `node`
+					leftNode := currentNode.left(tree)
+					tree.returnNode(currentNode)
+					resultNode = leftNode
+					// No new key when right node is removed and replaced with left node
+				} else {
+					// Right subtree changed but node wasn't removed
+					tree.mutateNode(currentNode)
+					currentNode.setRight(childResult.node)
+
+					// Update key if needed (this is crucial for correct hash calculation)
+					if childResult.newKey != nil {
+						currentNode.key = childResult.newKey
+					}
+
+					// Update node's height and size
+					err := currentNode.calcHeightAndSize(tree)
+					if err != nil {
+						return nil, nil, nil, false, err
+					}
+
+					// Balance the node
+					resultNode, err = tree.balance(currentNode)
+					if err != nil {
+						return nil, nil, nil, false, err
+					}
+				}
+			}
+
+			// Create result for this node
+			result := resultInfo{
+				node:       resultNode,
+				newKey:     resultKey,
+				value:      childResult.value,
+				wasRemoved: true,
+			}
+
+			// Store result for parent frame or return final result
+			if len(stack) > 0 {
+				parentFrame := &stack[len(stack)-1]
+				resultMap[parentFrame.node] = result
+			} else {
+				// We're at the root
+				return result.node, result.newKey, result.value, result.wasRemoved, nil
+			}
 		}
-
-		if !removed {
-			return node, nil, value, removed, nil
-		}
-
-		tree.addOrphan(node)
-
-		// left node held value, was removed
-		// collapse `node.rightNode` into `node`
-		if newLeftNode == nil {
-			right := node.right(tree)
-			k := node.key
-			tree.returnNode(node)
-			return right, k, value, removed, nil
-		}
-
-		tree.mutateNode(node)
-
-		node.setLeft(newLeftNode)
-		err = node.calcHeightAndSize(tree)
-		if err != nil {
-			return nil, nil, nil, false, err
-		}
-		node, err = tree.balance(node)
-		if err != nil {
-			return nil, nil, nil, false, err
-		}
-
-		return node, newKey, value, removed, nil
-	}
-	// node.key >= key; either found or look to the right:
-	newRightNode, newKey, value, removed, err := tree.recursiveRemove(node.right(tree), key)
-	if err != nil {
-		return nil, nil, nil, false, err
 	}
 
-	if !removed {
-		return node, nil, value, removed, nil
-	}
-
-	tree.addOrphan(node)
-
-	// right node held value, was removed
-	// collapse `node.leftNode` into `node`
-	if newRightNode == nil {
-		left := node.left(tree)
-		tree.returnNode(node)
-		return left, nil, value, removed, nil
-	}
-
-	tree.mutateNode(node)
-
-	node.setRight(newRightNode)
-	if newKey != nil {
-		node.key = newKey
-	}
-	err = node.calcHeightAndSize(tree)
-	if err != nil {
-		return nil, nil, nil, false, err
-	}
-
-	node, err = tree.balance(node)
-	if err != nil {
-		return nil, nil, nil, false, err
-	}
-
-	return node, nil, value, removed, nil
+	// We should never reach here
+	return nil, nil, nil, false, fmt.Errorf("unexpected exit from recursiveRemove")
 }
 
 func (tree *Tree) Size() int64 {
