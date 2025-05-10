@@ -577,9 +577,11 @@ func (sql *SqliteDb) ResetShardQueries() error {
 		}
 	}
 
-	if sql.readPool != nil {
-		return sql.readPool.ResetShardQueries()
-	}
+	go func() {
+		if sql.readPool != nil {
+			sql.readPool.ResetShardQueries()
+		}
+	}()
 
 	return nil
 }

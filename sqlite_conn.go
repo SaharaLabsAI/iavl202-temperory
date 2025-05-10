@@ -14,8 +14,9 @@ type SqliteReadConn struct {
 	queryLeaf *gosqlite.Stmt
 	queryKV   *gosqlite.Stmt
 
-	shards       *VersionRange
-	shardQueries map[int64]*gosqlite.Stmt
+	shards            *VersionRange
+	shardQueries      map[int64]*gosqlite.Stmt
+	pendingResetShard bool
 
 	opts *SqliteDbOptions
 
@@ -27,12 +28,13 @@ type SqliteReadConn struct {
 
 func NewSqliteReadConn(conn *gosqlite.Conn, opts *SqliteDbOptions, logger Logger) *SqliteReadConn {
 	return &SqliteReadConn{
-		conn:         conn,
-		shards:       &VersionRange{},
-		shardQueries: make(map[int64]*gosqlite.Stmt),
-		opts:         opts,
-		inUse:        false,
-		logger:       logger,
+		conn:              conn,
+		shards:            &VersionRange{},
+		shardQueries:      make(map[int64]*gosqlite.Stmt),
+		opts:              opts,
+		inUse:             false,
+		pendingResetShard: false,
+		logger:            logger,
 	}
 }
 
@@ -122,6 +124,17 @@ func (c *SqliteReadConn) getLeaf(pool *NodePool, nodeKey NodeKey) (*Node, error)
 func (c *SqliteReadConn) getNode(pool *NodePool, nodeKey NodeKey) (*Node, error) {
 	defer c.MarkIdle()
 
+	c.mu.Lock()
+	shouldResetShard := c.pendingResetShard
+	c.mu.Unlock()
+
+	if shouldResetShard {
+		err := c.ResetShardQueries()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	q, err := c.getShardQuery(nodeKey.Version())
 	if err != nil {
 		return nil, err
@@ -183,6 +196,10 @@ func (c *SqliteReadConn) getShardQuery(version int64) (*gosqlite.Stmt, error) {
 }
 
 func (c *SqliteReadConn) ResetShardQueries() error {
+	c.mu.Lock()
+	c.pendingResetShard = false
+	c.mu.Unlock()
+
 	treeWrite, err := gosqlite.Open(c.opts.treeConnectionString(), c.opts.Mode)
 	if err != nil {
 		return err
@@ -232,6 +249,13 @@ func (c *SqliteReadConn) ResetShardQueries() error {
 	}
 
 	return nil
+}
+
+func (c *SqliteReadConn) SetPendingResetShard() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.pendingResetShard = true
 }
 
 func (c *SqliteReadConn) MarkIdle() {

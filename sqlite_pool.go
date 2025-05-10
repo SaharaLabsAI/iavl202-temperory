@@ -1,7 +1,6 @@
 package iavl
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -135,19 +134,13 @@ func (pool *SqliteReadonlyConnPool) Close() error {
 	return lastErr
 }
 
-func (pool *SqliteReadonlyConnPool) ResetShardQueries() error {
+func (pool *SqliteReadonlyConnPool) ResetShardQueries() {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
-	var err error
 	for _, conn := range pool.conns {
-		e := conn.ResetShardQueries()
-		if e != nil {
-			err = errors.Join(err, e)
-		}
+		conn.SetPendingResetShard()
 	}
-
-	return err
 }
 
 func (pool *SqliteReadonlyConnPool) CloseKVIterstor(idx int) error {
