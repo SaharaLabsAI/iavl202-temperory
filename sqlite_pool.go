@@ -2,6 +2,7 @@ package iavl
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -66,6 +67,12 @@ func (pool *SqliteReadonlyConnPool) createReadConn() (*SqliteReadConn, error) {
 	err = conn.Exec("PRAGMA journal_mode=WAL;")
 	if err != nil {
 		conn.Close()
+		return nil, err
+	}
+
+	pageSize := max(os.Getpagesize(), defaultPageSize)
+	err = conn.Exec(fmt.Sprintf("PRAGMA page_size=%d;", pageSize))
+	if err != nil {
 		return nil, err
 	}
 
