@@ -62,6 +62,9 @@ type SqliteDb struct {
 	logger  Logger
 
 	useReadPool bool
+
+	operationsCounter int64
+	lastOptimization  int64
 }
 
 func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
@@ -463,6 +466,8 @@ func (sql *SqliteDb) getNode(nodeKey NodeKey) (*Node, error) {
 		sql.metrics.MeasureSince(start, metricsNamespace, "db_get")
 		sql.metrics.IncrCounter(1, metricsNamespace, "db_get_branch")
 	}()
+
+	sql.trackOperationForOptimize()
 
 	conn, err := sql.getReadConn()
 	if err != nil {
@@ -943,6 +948,8 @@ func (sql *SqliteDb) GetAt(version int64, key []byte) ([]byte, error) {
 		return nil, fmt.Errorf("get value with key length 0")
 	}
 
+	sql.trackOperationForOptimize()
+
 	conn, err := sql.getReadConn()
 	if err != nil {
 		return nil, err
@@ -1037,4 +1044,49 @@ func (sql *SqliteDb) getHeightOneBranchesIteratorQuery(start, end int64) (stmt *
 	}
 
 	return stmt, err
+}
+
+func (sql *SqliteDb) trackOperationForOptimize() {
+	const optimizationThreshold = 50_0000
+
+	sql.operationsCounter++
+
+	if sql.operationsCounter >= sql.lastOptimization+optimizationThreshold {
+		go func() {
+			err := sql.runOptimize()
+			if err != nil {
+				sql.logger.Debug(fmt.Sprintf("Auto-optimization failed: %v", err))
+				return
+			}
+
+			sql.lastOptimization = sql.operationsCounter
+			sql.logger.Info(fmt.Sprintf("Auto-optimized database after %d operations", sql.operationsCounter))
+		}()
+	}
+}
+
+func (sql *SqliteDb) runOptimize() error {
+	// First optimize the tree database
+	err := sql.treeWrite.Exec("PRAGMA optimize;")
+	if err != nil {
+		return fmt.Errorf("failed to optimize tree database: %w", err)
+	}
+
+	// Then optimize the leaf database
+	err = sql.leafWrite.Exec("PRAGMA optimize;")
+	if err != nil {
+		return fmt.Errorf("failed to optimize leaf database: %w", err)
+	}
+
+	sql.logger.Info("Optimized SQLite databases for query performance")
+
+	// For the read connection
+	if sql.read != nil {
+		err = sql.read.conn.Exec("PRAGMA optimize;")
+		if err != nil {
+			return fmt.Errorf("failed to optimize read conn: %w", err)
+		}
+	}
+
+	return nil
 }
