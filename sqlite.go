@@ -19,6 +19,7 @@ const defaultSQLitePath = "/tmp/iavl2"
 const defaultShardID = 1
 const defaultMaxPoolSize = 100
 const defaultPageSize = 4096 * 8
+const defaultThreadsCount = 8
 
 type SqliteDbOptions struct {
 	Path          string
@@ -30,6 +31,10 @@ type SqliteDbOptions struct {
 	TempStoreSize int
 	ShardTrees    bool
 	MaxPoolSize   int
+
+	BusyTimeout    int
+	ThreadsCount   int
+	StatementCache int
 
 	Logger  Logger
 	Metrics metrics.Proxy
@@ -90,6 +95,18 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 
 	if opts.MaxPoolSize == 0 {
 		opts.MaxPoolSize = defaultMaxPoolSize
+	}
+
+	if opts.BusyTimeout == 0 {
+		opts.BusyTimeout = 5000 // 5 seconds
+	}
+
+	if opts.ThreadsCount == 0 {
+		opts.ThreadsCount = defaultThreadsCount
+	}
+
+	if opts.StatementCache == 0 {
+		opts.StatementCache = 100
 	}
 
 	if opts.Logger == nil {
@@ -340,6 +357,7 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS changelog;", sql.opts.leafConnectionString()))
 	if err != nil {
 		return nil, err
@@ -370,6 +388,26 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 		return nil, err
 	}
 	err = conn.Exec(fmt.Sprintf("PRAGMA temp_store_size=%d;", sql.opts.TempStoreSize))
+	if err != nil {
+		return nil, err
+	}
+	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", sql.opts.BusyTimeout))
+	if err != nil {
+		return nil, err
+	}
+	err = conn.Exec(fmt.Sprintf("PRAGMA threads=%d;", sql.opts.ThreadsCount))
+	if err != nil {
+		return nil, err
+	}
+	err = conn.Exec("PRAGMA read_uncommitted=ON;")
+	if err != nil {
+		return nil, err
+	}
+	err = conn.Exec("PRAGMA query_only=ON;")
+	if err != nil {
+		return nil, err
+	}
+	err = conn.Exec(fmt.Sprintf("PRAGMA sqlite_stmt_cache=%d;", sql.opts.StatementCache))
 	if err != nil {
 		return nil, err
 	}

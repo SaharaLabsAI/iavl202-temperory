@@ -88,6 +88,31 @@ func (pool *SqliteReadonlyConnPool) createReadConn() (*SqliteReadConn, error) {
 		return nil, err
 	}
 
+	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", pool.opts.BusyTimeout))
+	if err != nil {
+		return nil, err
+	}
+
+	err = conn.Exec(fmt.Sprintf("PRAGMA threads=%d;", pool.opts.ThreadsCount))
+	if err != nil {
+		return nil, err
+	}
+
+	err = conn.Exec("PRAGMA read_uncommitted=ON;")
+	if err != nil {
+		return nil, err
+	}
+
+	err = conn.Exec("PRAGMA query_only=ON;")
+	if err != nil {
+		return nil, err
+	}
+
+	err = conn.Exec(fmt.Sprintf("PRAGMA sqlite_stmt_cache=%d;", pool.opts.StatementCache))
+	if err != nil {
+		return nil, err
+	}
+
 	readConn := NewSqliteReadConn(conn, pool.opts, pool.logger)
 
 	return readConn, nil
