@@ -87,7 +87,7 @@ func (c *SqliteReadConn) getLeaf(pool *NodePool, nodeKey NodeKey) (*Node, error)
 
 	var err error
 	if c.queryLeaf == nil {
-		c.queryLeaf, err = c.conn.Prepare("SELECT bytes FROM changelog.leaf WHERE version = ? AND sequence = ?")
+		c.queryLeaf, err = c.conn.Prepare("SELECT bytes FROM changelog.leaf WHERE version = ? AND sequence = ? LIMIT 1")
 		if err != nil {
 			return nil, err
 		}
@@ -182,7 +182,7 @@ func (c *SqliteReadConn) getShardQuery(version int64) (*gosqlite.Stmt, error) {
 		return q, nil
 	}
 
-	sqlQuery := fmt.Sprintf("SELECT bytes FROM tree_%d WHERE version = ? AND sequence = ?", v)
+	sqlQuery := fmt.Sprintf("SELECT bytes FROM tree_%d WHERE version = ? AND sequence = ? LIMIT 1", v)
 	q, err := c.conn.Prepare(sqlQuery)
 	if err != nil {
 		return nil, err

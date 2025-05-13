@@ -649,7 +649,7 @@ func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	rootQuery, err := conn.Prepare("SELECT node_version, node_sequence, bytes FROM root WHERE version = ?", version)
+	rootQuery, err := conn.Prepare("SELECT node_version, node_sequence, bytes FROM root WHERE version = ? LIMIT 1", version)
 	if err != nil {
 		return nil, err
 	}
@@ -1059,7 +1059,7 @@ func (sql *SqliteDb) HasRoot(version int64) (bool, error) {
 		return false, err
 	}
 
-	rootQuery, err := conn.Prepare("SELECT node_version FROM root WHERE version = ?", version)
+	rootQuery, err := conn.Prepare("SELECT node_version FROM root WHERE version = ? LIMIT 1", version)
 	if err != nil {
 		return false, err
 	}
