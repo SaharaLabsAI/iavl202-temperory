@@ -173,12 +173,15 @@ func (pool *SqliteReadonlyConnPool) Close() error {
 }
 
 func (pool *SqliteReadonlyConnPool) ResetShardQueries() {
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
+	// disable now because we don't enable sharding
+	return
 
-	for _, conn := range pool.conns {
-		conn.SetPendingResetShard()
-	}
+	// pool.mu.Lock()
+	// defer pool.mu.Unlock()
+	//
+	// for _, conn := range pool.conns {
+	// 	conn.SetPendingResetShard()
+	// }
 }
 
 func (pool *SqliteReadonlyConnPool) CloseKVIterstor(idx int) error {

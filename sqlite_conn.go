@@ -2,7 +2,6 @@ package iavl
 
 import (
 	"fmt"
-	"strconv"
 	"sync"
 
 	"github.com/eatonphil/gosqlite"
@@ -196,59 +195,62 @@ func (c *SqliteReadConn) getShardQuery(version int64) (*gosqlite.Stmt, error) {
 }
 
 func (c *SqliteReadConn) ResetShardQueries() error {
-	c.mu.Lock()
-	c.pendingResetShard = false
-	c.mu.Unlock()
-
-	treeWrite, err := gosqlite.Open(c.opts.treeConnectionString(), c.opts.Mode)
-	if err != nil {
-		return err
-	}
-	defer treeWrite.Close()
-
-	for k, q := range c.shardQueries {
-		err := q.Close()
-		if err != nil {
-			return err
-		}
-		delete(c.shardQueries, k)
-	}
-
-	c.shards = &VersionRange{}
-
-	q, err := treeWrite.Prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'tree_%'")
-	if err != nil {
-		return err
-	}
-	defer q.Close()
-
-	for {
-		hasRow, err := q.Step()
-		if err != nil {
-			return err
-		}
-
-		if !hasRow {
-			break
-		}
-
-		var shard string
-		err = q.Scan(&shard)
-		if err != nil {
-			return err
-		}
-
-		shardVersion, err := strconv.Atoi(shard[5:])
-		if err != nil {
-			return err
-		}
-
-		if err = c.shards.Add(int64(shardVersion)); err != nil {
-			return fmt.Errorf("failed to add shard path=%s: %w", c.opts.Path, err)
-		}
-	}
-
+	// disable now because we don't enable sharding
 	return nil
+
+	// c.mu.Lock()
+	// c.pendingResetShard = false
+	// c.mu.Unlock()
+	//
+	// treeWrite, err := gosqlite.Open(c.opts.treeConnectionString(), c.opts.Mode)
+	// if err != nil {
+	// 	return err
+	// }
+	// defer treeWrite.Close()
+	//
+	// for k, q := range c.shardQueries {
+	// 	err := q.Close()
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	delete(c.shardQueries, k)
+	// }
+	//
+	// c.shards = &VersionRange{}
+	//
+	// q, err := treeWrite.Prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'tree_%'")
+	// if err != nil {
+	// 	return err
+	// }
+	// defer q.Close()
+	//
+	// for {
+	// 	hasRow, err := q.Step()
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	//
+	// 	if !hasRow {
+	// 		break
+	// 	}
+	//
+	// 	var shard string
+	// 	err = q.Scan(&shard)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	//
+	// 	shardVersion, err := strconv.Atoi(shard[5:])
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	//
+	// 	if err = c.shards.Add(int64(shardVersion)); err != nil {
+	// 		return fmt.Errorf("failed to add shard path=%s: %w", c.opts.Path, err)
+	// 	}
+	// }
+	//
+	// return nil
 }
 
 func (c *SqliteReadConn) SetPendingResetShard() {
