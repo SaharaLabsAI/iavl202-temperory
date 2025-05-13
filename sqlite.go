@@ -26,13 +26,18 @@ const defaultAnalysisLimit = 2000
 const PageSize8K = 8192
 
 var (
-	Force8KPageSize   = "0"
-	isForce8KPageSize = false
+	Force8KPageSize        = "0"
+	isForce8KPageSize      = false
+	DisableS2Compression   = "0"
+	isDisableS2Compression = false
 )
 
 func init() {
 	if Force8KPageSize == "1" {
 		isForce8KPageSize = true
+	}
+	if DisableS2Compression == "1" {
+		isDisableS2Compression = true
 	}
 }
 
@@ -653,14 +658,17 @@ func (sql *SqliteDb) SaveRoot(version int64, node *Node) error {
 			return err
 		}
 
-		compressBuf := bufPool.Get().(*bytes.Buffer)
-		defer bufPool.Put(compressBuf)
+		bz := buf.Bytes()
+		if !isDisableS2Compression {
+			compressBuf := bufPool.Get().(*bytes.Buffer)
+			defer bufPool.Put(compressBuf)
 
-		compressBuf.Reset()
-		cb := s2.Encode(compressBuf.Bytes(), buf.Bytes())
+			compressBuf.Reset()
+			bz = s2.Encode(compressBuf.Bytes(), buf.Bytes())
+		}
 
 		err = sql.treeWrite.Exec("INSERT OR REPLACE INTO root(version, node_version, node_sequence, bytes) VALUES (?, ?, ?, ?)",
-			version, node.nodeKey.Version(), int(node.nodeKey.Sequence()), cb)
+			version, node.nodeKey.Version(), int(node.nodeKey.Sequence()), bz)
 		if err != nil {
 			return err
 		}

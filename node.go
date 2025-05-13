@@ -428,12 +428,15 @@ func EncodeBytes(w io.Writer, bz []byte) error {
 
 // MakeNode constructs a *Node from an encoded byte slice.
 func MakeNode(pool *NodePool, nodeKey NodeKey, buf []byte) (*Node, error) {
-	decBuf := bufPool.Get().(*bytes.Buffer)
-	defer bufPool.Put(decBuf)
+	if !isDisableS2Compression {
+		decBuf := bufPool.Get().(*bytes.Buffer)
+		defer bufPool.Put(decBuf)
 
-	buf, err := s2.Decode(decBuf.Bytes(), buf)
-	if err != nil {
-		return nil, err
+		var err error
+		buf, err = s2.Decode(decBuf.Bytes(), buf)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Read node header (height, size, version, key).
@@ -602,12 +605,15 @@ func NewImportNode(key, value []byte, version int64, height int8) *Node {
 }
 
 func extractValue(buf []byte) ([]byte, error) {
-	decBuf := bufPool.Get().(*bytes.Buffer)
-	defer bufPool.Put(decBuf)
+	if !isDisableS2Compression {
+		decBuf := bufPool.Get().(*bytes.Buffer)
+		defer bufPool.Put(decBuf)
 
-	buf, err := s2.Decode(decBuf.Bytes(), buf)
-	if err != nil {
-		return nil, err
+		var err error
+		buf, err = s2.Decode(decBuf.Bytes(), buf)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Read node header (height, size, version, key).

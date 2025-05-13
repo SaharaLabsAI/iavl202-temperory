@@ -151,10 +151,13 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 			return 0, err
 		}
 
-		compressBuf.Reset()
-		cb := s2.Encode(compressBuf.Bytes(), buf.Bytes())
+		bz := buf.Bytes()
+		if !isDisableS2Compression {
+			compressBuf.Reset()
+			bz = s2.Encode(compressBuf.Bytes(), buf.Bytes())
+		}
 
-		if err = b.leafInsert.Exec(leaf.nodeKey.Version(), int(leaf.nodeKey.Sequence()), leaf.key, cb); err != nil {
+		if err = b.leafInsert.Exec(leaf.nodeKey.Version(), int(leaf.nodeKey.Sequence()), leaf.key, bz); err != nil {
 			return 0, err
 		}
 
@@ -239,10 +242,13 @@ func (b *sqliteBatch) saveBranches() (n int64, err error) {
 			return 0, err
 		}
 
-		compressBuf.Reset()
-		cb := s2.Encode(compressBuf.Bytes(), buf.Bytes())
+		bz := buf.Bytes()
+		if !isDisableS2Compression {
+			compressBuf.Reset()
+			bz = s2.Encode(compressBuf.Bytes(), buf.Bytes())
+		}
 
-		if err = b.treeInsert.Exec(node.nodeKey.Version(), int(node.nodeKey.Sequence()), cb); err != nil {
+		if err = b.treeInsert.Exec(node.nodeKey.Version(), int(node.nodeKey.Sequence()), bz); err != nil {
 			return 0, err
 		}
 
