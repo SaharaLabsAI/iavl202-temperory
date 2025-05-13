@@ -75,6 +75,9 @@ func (pool *SqliteReadonlyConnPool) createReadConn() (*SqliteReadConn, error) {
 	}
 
 	pageSize := max(os.Getpagesize(), defaultPageSize)
+	if isForce8KPageSize {
+		pageSize = PageSize8K
+	}
 	err = conn.Exec(fmt.Sprintf("PRAGMA page_size=%d;", pageSize))
 	if err != nil {
 		return nil, err

@@ -22,6 +22,18 @@ const defaultMaxPoolSize = 200
 const defaultPageSize = 4096 * 8 // 32K
 const defaultThreadsCount = 8
 const defaultAnalysisLimit = 2000
+const PageSize8K = 8192
+
+var (
+	Force8KPageSize   = "0"
+	isForce8KPageSize = false
+)
+
+func init() {
+	if Force8KPageSize == "1" {
+		isForce8KPageSize = true
+	}
+}
 
 type SqliteDbOptions struct {
 	Path          string
@@ -248,6 +260,9 @@ CREATE TABLE root (
 		}
 
 		pageSize := max(os.Getpagesize(), defaultPageSize)
+		if isForce8KPageSize {
+			pageSize = PageSize8K
+		}
 		sql.logger.Info(fmt.Sprintf("setting page size to %s", humanize.Bytes(uint64(pageSize))))
 		err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA page_size=%d; VACUUM;", pageSize))
 		if err != nil {
@@ -304,6 +319,9 @@ CREATE INDEX leaf_orphan_idx ON leaf_orphan (at DESC);`)
 		}
 
 		pageSize := max(os.Getpagesize(), defaultPageSize)
+		if isForce8KPageSize {
+			pageSize = PageSize8K
+		}
 		sql.logger.Info(fmt.Sprintf("setting page size to %s", humanize.Bytes(uint64(pageSize))))
 		err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA page_size=%d; VACUUM;", pageSize))
 		if err != nil {
@@ -441,6 +459,9 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 		return nil, err
 	}
 	pageSize := max(os.Getpagesize(), defaultPageSize)
+	if isForce8KPageSize {
+		pageSize = PageSize8K
+	}
 	err = conn.Exec(fmt.Sprintf("PRAGMA page_size=%d;", pageSize))
 	if err != nil {
 		return nil, err
