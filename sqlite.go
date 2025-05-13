@@ -11,6 +11,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/eatonphil/gosqlite"
 	api "github.com/kocubinski/costor-api"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/cosmos/iavl/v2/metrics"
 )
@@ -20,6 +21,7 @@ const defaultShardID = 1
 const defaultMaxPoolSize = 100
 const defaultPageSize = 4096 * 8 // 32K
 const defaultThreadsCount = 8
+const defaultAnalysisLimit = 3000
 
 type SqliteDbOptions struct {
 	Path          string
@@ -62,9 +64,6 @@ type SqliteDb struct {
 	logger  Logger
 
 	useReadPool bool
-
-	operationsCounter int64
-	lastOptimization  int64
 }
 
 func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
@@ -205,6 +204,14 @@ func NewSqliteDb(pool *NodePool, opts SqliteDbOptions) (*SqliteDb, error) {
 		return nil, err
 	}
 
+	if err = sql.runAnalyze(); err != nil {
+		return nil, err
+	}
+
+	if err = sql.runOptimize(); err != nil {
+		return nil, err
+	}
+
 	sql.readPool, err = NewSqliteReadonlyConnPool(&opts, opts.MaxPoolSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize read connection pool: %w", err)
@@ -246,6 +253,10 @@ CREATE TABLE root (
 		if err != nil {
 			return err
 		}
+		err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA analysis_limit=%d;", defaultAnalysisLimit))
+		if err != nil {
+			return err
+		}
 		err = sql.treeWrite.Exec("PRAGMA temp_store=MEMORY;")
 		if err != nil {
 			return err
@@ -257,6 +268,10 @@ CREATE TABLE root (
 
 		sql.logger.Info(fmt.Sprintf("creating shard %d", defaultShardID))
 		err := sql.treeWrite.Exec(fmt.Sprintf("CREATE TABLE tree_%d (version int, sequence int, bytes blob, orphaned bool);", defaultShardID))
+		if err != nil {
+			return err
+		}
+		err = sql.treeWrite.Exec(fmt.Sprintf("CREATE INDEX tree_idx_%d ON tree_%d (version, sequence);", defaultShardID, defaultShardID))
 		if err != nil {
 			return err
 		}
@@ -272,6 +287,8 @@ CREATE TABLE root (
 	if !hasRow {
 		err = sql.leafWrite.Exec(`
 CREATE TABLE leaf (version int, sequence int, key blob, bytes blob, orphaned bool);
+CREATE UNIQUE INDEX leaf_idx ON leaf (version DESC, sequence);
+CREATE UNIQUE INDEX leaf_key_idx ON leaf (key, version DESC);
 CREATE TABLE leaf_orphan (version int, sequence int, at int);
 CREATE INDEX leaf_orphan_idx ON leaf_orphan (at DESC);`)
 		if err != nil {
@@ -285,6 +302,10 @@ CREATE INDEX leaf_orphan_idx ON leaf_orphan (at DESC);`)
 			return err
 		}
 		err = sql.leafWrite.Exec("PRAGMA journal_mode=WAL;")
+		if err != nil {
+			return err
+		}
+		err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA analysis_limit=%d;", defaultAnalysisLimit))
 		if err != nil {
 			return err
 		}
@@ -467,8 +488,6 @@ func (sql *SqliteDb) getNode(nodeKey NodeKey) (*Node, error) {
 		sql.metrics.MeasureSince(start, metricsNamespace, "db_get")
 		sql.metrics.IncrCounter(1, metricsNamespace, "db_get_branch")
 	}()
-
-	sql.trackOperationForOptimize()
 
 	conn, err := sql.getReadConn()
 	if err != nil {
@@ -949,8 +968,6 @@ func (sql *SqliteDb) GetAt(version int64, key []byte) ([]byte, error) {
 		return nil, fmt.Errorf("get value with key length 0")
 	}
 
-	sql.trackOperationForOptimize()
-
 	conn, err := sql.getReadConn()
 	if err != nil {
 		return nil, err
@@ -1047,47 +1064,74 @@ func (sql *SqliteDb) getHeightOneBranchesIteratorQuery(start, end int64) (stmt *
 	return stmt, err
 }
 
-func (sql *SqliteDb) trackOperationForOptimize() {
-	const optimizationThreshold = 50_0000
+func (sql *SqliteDb) runAnalyze() error {
+	start := time.Now()
+	defer func() {
+		sql.metrics.MeasureSince(start, metricsNamespace, "db_analyze")
+		sql.logger.Info(fmt.Sprintf("tree %s indexes analyzed, duration %d", sql.opts.Path, time.Since(start).Milliseconds()))
+	}()
 
-	sql.operationsCounter++
+	eg := errgroup.Group{}
+	eg.SetLimit(2)
 
-	if sql.operationsCounter >= sql.lastOptimization+optimizationThreshold {
-		go func() {
-			err := sql.runOptimize()
-			if err != nil {
-				sql.logger.Debug(fmt.Sprintf("Auto-optimization failed: %v", err))
-				return
-			}
+	eg.Go(func() error {
+		if err := sql.treeWrite.Exec(fmt.Sprintf("ANALYZE tree_idx_%d;", defaultShardID)); err != nil {
+			return fmt.Errorf("failed to analyze tree %s: %w", sql.opts.Path, err)
+		}
+		return nil
+	})
 
-			sql.lastOptimization = sql.operationsCounter
-			sql.logger.Info(fmt.Sprintf("Auto-optimized database after %d operations", sql.operationsCounter))
-		}()
+	eg.Go(func() error {
+		if err := sql.leafWrite.Exec("ANALYZE leaf_idx;"); err != nil {
+			return fmt.Errorf("failed to analyze tree leaf %s: %w", sql.opts.Path, err)
+		}
+		if err := sql.leafWrite.Exec("ANALYZE leaf_key_idx;"); err != nil {
+			return fmt.Errorf("failed to analyze tree leaf %s: %w", sql.opts.Path, err)
+		}
+		return nil
+	})
+
+	if err := eg.Wait(); err != nil {
+		return err
 	}
+
+	sql.logger.Info(fmt.Sprintf("tree %s indexes analyzed", sql.opts.Path))
+
+	return nil
 }
 
 func (sql *SqliteDb) runOptimize() error {
-	// First optimize the tree database
-	err := sql.treeWrite.Exec("PRAGMA optimize;")
-	if err != nil {
-		return fmt.Errorf("failed to optimize tree database: %w", err)
-	}
+	start := time.Now()
+	defer func() {
+		sql.metrics.MeasureSince(start, metricsNamespace, "db_optimize")
+		sql.logger.Info(fmt.Sprintf("tree %s indexes optimized, duration %d", sql.opts.Path, time.Since(start).Milliseconds()))
+	}()
 
-	// Then optimize the leaf database
-	err = sql.leafWrite.Exec("PRAGMA optimize;")
-	if err != nil {
-		return fmt.Errorf("failed to optimize leaf database: %w", err)
-	}
+	eg := errgroup.Group{}
+	eg.SetLimit(2)
 
-	sql.logger.Info("Optimized SQLite databases for query performance")
-
-	// For the read connection
-	if sql.read != nil {
-		err = sql.read.conn.Exec("PRAGMA optimize;")
-		if err != nil {
-			return fmt.Errorf("failed to optimize read conn: %w", err)
+	eg.Go(func() error {
+		if err := sql.treeWrite.Exec(fmt.Sprintf("PRAGMA optimize('tree_idx_%d');", defaultShardID)); err != nil {
+			return fmt.Errorf("failed to optimize tree %s: %w", sql.opts.Path, err)
 		}
+		return nil
+	})
+
+	eg.Go(func() error {
+		if err := sql.leafWrite.Exec("PRAGMA optimize('leaf_idx');"); err != nil {
+			return fmt.Errorf("failed to optimize tree leaf %s: %w", sql.opts.Path, err)
+		}
+		if err := sql.leafWrite.Exec("PRAGMA optimize('leaf_key_idx');"); err != nil {
+			return fmt.Errorf("failed to optimize tree leaf %s: %w", sql.opts.Path, err)
+		}
+		return nil
+	})
+
+	if err := eg.Wait(); err != nil {
+		return err
 	}
+
+	sql.logger.Info(fmt.Sprintf("tree %s indexes optimized", sql.opts.Path))
 
 	return nil
 }
