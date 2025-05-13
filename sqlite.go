@@ -115,7 +115,7 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	}
 
 	if opts.BusyTimeout == 0 {
-		opts.BusyTimeout = 15000
+		opts.BusyTimeout = 30000
 	}
 
 	if opts.ThreadsCount == 0 {
@@ -393,6 +393,11 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
+	err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", sql.opts.BusyTimeout))
+	if err != nil {
+		return err
+	}
+
 	sql.leafWrite, err = gosqlite.Open(sql.opts.leafConnectionString(), sql.opts.Mode)
 	if err != nil {
 		return err
@@ -421,6 +426,11 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	}
 
 	if err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", sql.opts.walPages)); err != nil {
+		return err
+	}
+
+	err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", sql.opts.BusyTimeout))
+	if err != nil {
 		return err
 	}
 
