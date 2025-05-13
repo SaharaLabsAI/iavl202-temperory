@@ -354,10 +354,6 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	if err != nil {
 		return err
 	}
-	err = sql.treeWrite.Exec("PRAGMA locking_mode=EXCLUSIVE;")
-	if err != nil {
-		return err
-	}
 	err = sql.treeWrite.Exec("PRAGMA journal_mode=WAL;")
 	if err != nil {
 		return err
@@ -386,10 +382,6 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 
 	err = sql.leafWrite.Exec("PRAGMA synchronous=OFF;")
 	// err = sql.leafWrite.Exec("PRAGMA synchronous=NORMAL;")
-	if err != nil {
-		return err
-	}
-	err = sql.leafWrite.Exec("PRAGMA locking_mode=EXCLUSIVE;")
 	if err != nil {
 		return err
 	}
@@ -483,10 +475,6 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 		return nil, err
 	}
 	err = conn.Exec("PRAGMA query_only=ON;")
-	if err != nil {
-		return nil, err
-	}
-	err = conn.Exec("PRAGMA locking_mode=NORMAL;")
 	if err != nil {
 		return nil, err
 	}

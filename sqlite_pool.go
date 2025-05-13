@@ -116,11 +116,6 @@ func (pool *SqliteReadonlyConnPool) createReadConn() (*SqliteReadConn, error) {
 		return nil, err
 	}
 
-	err = conn.Exec("PRAGMA locking_mode=NORMAL;")
-	if err != nil {
-		return nil, err
-	}
-
 	err = conn.Exec(fmt.Sprintf("PRAGMA sqlite_stmt_cache=%d;", pool.opts.StatementCache))
 	if err != nil {
 		return nil, err
