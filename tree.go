@@ -1215,8 +1215,9 @@ func (tree *Tree) VersionExists(version int64) (bool, error) {
 	return exists, nil
 }
 
-func (tree *Tree) GetAt(version int64, key []byte) ([]byte, error) {
-	return tree.sql.GetAt(version, key)
+func (tree *Tree) GetFromRoot(key []byte) ([]byte, error) {
+	_, val, err := tree.root.get(tree, key)
+	return val, err
 }
 
 func (tree *Tree) IteratorLeavesAt(version int64) (Iterator, error) {
