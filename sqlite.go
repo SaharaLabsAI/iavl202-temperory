@@ -43,7 +43,7 @@ type SqliteDbOptions struct {
 
 	walPages int
 
-	optimizeOnStart bool
+	OptimizeOnStart bool
 }
 
 type SqliteDb struct {
@@ -206,7 +206,7 @@ func NewSqliteDb(pool *NodePool, opts SqliteDbOptions) (*SqliteDb, error) {
 		return nil, err
 	}
 
-	if sql.opts.optimizeOnStart {
+	if sql.opts.OptimizeOnStart {
 		if err = sql.runAnalyze(); err != nil {
 			return nil, err
 		}
