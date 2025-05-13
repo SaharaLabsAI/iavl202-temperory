@@ -1069,7 +1069,7 @@ func (sql *SqliteDb) runAnalyze() error {
 	defer func() {
 		sql.metrics.MeasureSince(start, metricsNamespace, "db_analyze")
 		// sql.logger.Info(fmt.Sprintf("tree %s indexes analyzed, duration %d", sql.opts.Path, time.Since(start).Milliseconds()))
-		fmt.Sprintf("tree %s indexes analyzed, duration %d", sql.opts.Path, time.Since(start).Milliseconds())
+		fmt.Sprintf("tree %s indexes analyzed, duration %d\n", sql.opts.Path, time.Since(start).Milliseconds())
 	}()
 
 	eg := errgroup.Group{}
@@ -1106,7 +1106,7 @@ func (sql *SqliteDb) runOptimize() error {
 	defer func() {
 		sql.metrics.MeasureSince(start, metricsNamespace, "db_optimize")
 		sql.logger.Info(fmt.Sprintf("tree %s indexes optimized, duration %d", sql.opts.Path, time.Since(start).Milliseconds()))
-		fmt.Printf("tree %s indexes optimized, duration %d", sql.opts.Path, time.Since(start).Milliseconds())
+		fmt.Printf("tree %s indexes optimized, duration %d\n", sql.opts.Path, time.Since(start).Milliseconds())
 	}()
 
 	eg := errgroup.Group{}
