@@ -1224,6 +1224,10 @@ func (tree *Tree) IteratorLeavesAt(version int64) (Iterator, error) {
 	return tree.IteratorAt(version, nil, nil, true)
 }
 
+func (tree *Tree) Path() string {
+	return tree.sql.opts.Path
+}
+
 func (tree *Tree) Revert(version int64) error {
 	return tree.sql.Revert(version)
 }
