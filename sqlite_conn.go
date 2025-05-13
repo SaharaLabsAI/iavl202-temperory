@@ -253,30 +253,6 @@ func (c *SqliteReadConn) ResetShardQueries() error {
 	// return nil
 }
 
-func (c *SqliteReadConn) ResetQueries() error {
-	if c.queryLeaf != nil {
-		if err := c.queryLeaf.Reset(); err != nil {
-			return err
-		}
-	}
-
-	if c.queryKV != nil {
-		if err := c.queryKV.Reset(); err != nil {
-			return err
-		}
-	}
-
-	for _, q := range c.shardQueries {
-		if err := q.Reset(); err != nil {
-			return err
-		}
-	}
-
-	c.MarkIdle()
-
-	return nil
-}
-
 func (c *SqliteReadConn) SetPendingResetShard() {
 	c.mu.Lock()
 	defer c.mu.Unlock()

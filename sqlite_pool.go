@@ -23,8 +23,6 @@ type SqliteReadonlyConnPool struct {
 
 	metrics metrics.Proxy
 	logger  Logger
-
-	available bool
 }
 
 func NewSqliteReadonlyConnPool(opts *SqliteDbOptions, MaxPoolSize int) (*SqliteReadonlyConnPool, error) {
@@ -39,7 +37,6 @@ func NewSqliteReadonlyConnPool(opts *SqliteDbOptions, MaxPoolSize int) (*SqliteR
 		kvItrConns:  make(map[int]*SqliteReadConn),
 		metrics:     opts.Metrics,
 		logger:      opts.Logger,
-		available:   true,
 	}
 
 	pool.logger.Info(fmt.Sprintf("Created readonly connection pool with max size %d", MaxPoolSize))
@@ -136,10 +133,6 @@ func (pool *SqliteReadonlyConnPool) GetConn() (*SqliteReadConn, error) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
-	if !pool.available {
-		return nil, fmt.Errorf("service busy, no resource available")
-	}
-
 	for _, conn := range pool.conns {
 		if !conn.inUse {
 			conn.inUse = true
@@ -182,31 +175,6 @@ func (pool *SqliteReadonlyConnPool) Close() error {
 	pool.conns = nil
 
 	return lastErr
-}
-
-// TODO: Lock pool instead of throw error?
-func (pool *SqliteReadonlyConnPool) ResetQueriesAndMarkPoolUnavailable() error {
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-
-	pool.available = false
-
-	for _, conn := range pool.conns {
-		if conn.inUse {
-			if err := conn.ResetQueries(); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func (pool *SqliteReadonlyConnPool) MarkPoolAvailable() {
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-
-	pool.available = true
 }
 
 func (pool *SqliteReadonlyConnPool) ResetShardQueries() {

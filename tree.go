@@ -171,27 +171,11 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 		return nil, 0, err
 	}
 
-	if tree.sql.read != nil {
-		if err := tree.sql.read.ResetQueries(); err != nil {
-			return nil, 0, err
-		}
-	}
-
-	if tree.sql.readPool != nil {
-		if err := tree.sql.readPool.ResetQueriesAndMarkPoolUnavailable(); err != nil {
-			return nil, 0, err
-		}
-	}
-
 	rootHash := tree.computeHash()
 
 	err := tree.sqlWriter.saveTree(tree)
 	if err != nil {
 		return nil, tree.version, err
-	}
-
-	if tree.sql.readPool != nil {
-		tree.sql.readPool.MarkPoolAvailable()
 	}
 
 	tree.branchOrphans = nil
