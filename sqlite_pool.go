@@ -86,6 +86,11 @@ func (pool *SqliteReadonlyConnPool) createReadConn() (*SqliteReadConn, error) {
 		return nil, err
 	}
 
+	err = conn.Exec("PRAGMA automatic_index=OFF;")
+	if err != nil {
+		return nil, err
+	}
+
 	err = conn.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 0))
 	if err != nil {
 		conn.Close()

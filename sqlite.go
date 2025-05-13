@@ -377,6 +377,10 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	if err != nil {
 		return err
 	}
+	err = sql.treeWrite.Exec("PRAGMA automatic_index=OFF;")
+	if err != nil {
+		return err
+	}
 	err = sql.treeWrite.Exec("PRAGMA journal_mode=WAL;")
 	if err != nil {
 		return err
@@ -410,6 +414,10 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 
 	err = sql.leafWrite.Exec("PRAGMA synchronous=OFF;")
 	// err = sql.leafWrite.Exec("PRAGMA synchronous=NORMAL;")
+	if err != nil {
+		return err
+	}
+	err = sql.leafWrite.Exec("PRAGMA automatic_index=OFF;")
 	if err != nil {
 		return err
 	}
@@ -466,6 +474,10 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 		return nil, err
 	}
 	err = conn.Exec("PRAGMA journal_mode=WAL;")
+	if err != nil {
+		return nil, err
+	}
+	err = conn.Exec("PRAGMA automatic_index=OFF;")
 	if err != nil {
 		return nil, err
 	}
