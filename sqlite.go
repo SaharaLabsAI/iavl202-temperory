@@ -42,6 +42,8 @@ type SqliteDbOptions struct {
 	Metrics metrics.Proxy
 
 	walPages int
+
+	optimizeOnStart bool
 }
 
 type SqliteDb struct {
@@ -204,12 +206,14 @@ func NewSqliteDb(pool *NodePool, opts SqliteDbOptions) (*SqliteDb, error) {
 		return nil, err
 	}
 
-	if err = sql.runAnalyze(); err != nil {
-		return nil, err
-	}
+	if sql.opts.optimizeOnStart {
+		if err = sql.runAnalyze(); err != nil {
+			return nil, err
+		}
 
-	if err = sql.runOptimize(); err != nil {
-		return nil, err
+		if err = sql.runOptimize(); err != nil {
+			return nil, err
+		}
 	}
 
 	sql.readPool, err = NewSqliteReadonlyConnPool(&opts, opts.MaxPoolSize)
