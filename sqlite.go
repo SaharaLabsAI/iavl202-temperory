@@ -106,7 +106,12 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	if opts.Metrics == nil {
 		opts.Metrics = metrics.NilMetrics{}
 	}
-	opts.walPages = opts.WalSize / os.Getpagesize()
+
+	pageSize := max(os.Getpagesize(), defaultPageSize)
+	if isForce8KPageSize {
+		pageSize = PageSize8K
+	}
+	opts.walPages = opts.WalSize / pageSize
 
 	opts.ShardTrees = false
 
