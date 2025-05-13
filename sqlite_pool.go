@@ -50,7 +50,8 @@ func (pool *SqliteReadonlyConnPool) createReadConn() (*SqliteReadConn, error) {
 		pool.opts.ConnArgs = "mode=ro"
 	}
 
-	conn, err := gosqlite.Open(pool.opts.treeConnectionString(), pool.opts.Mode)
+	openMode := gosqlite.OPEN_READONLY | gosqlite.OPEN_NOMUTEX
+	conn, err := gosqlite.Open(pool.opts.treeConnectionString(), openMode)
 	pool.opts.ConnArgs = connArgs
 
 	if err != nil {
@@ -94,7 +95,8 @@ func (pool *SqliteReadonlyConnPool) createReadConn() (*SqliteReadConn, error) {
 		return nil, err
 	}
 
-	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", pool.opts.BusyTimeout))
+	busyTimeout := pool.opts.BusyTimeout * 3
+	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", busyTimeout))
 	if err != nil {
 		return nil, err
 	}
@@ -110,6 +112,11 @@ func (pool *SqliteReadonlyConnPool) createReadConn() (*SqliteReadConn, error) {
 	}
 
 	err = conn.Exec("PRAGMA query_only=ON;")
+	if err != nil {
+		return nil, err
+	}
+
+	err = conn.Exec("PRAGMA locking_mode=NORMAL;")
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +181,6 @@ func (pool *SqliteReadonlyConnPool) Close() error {
 
 func (pool *SqliteReadonlyConnPool) ResetShardQueries() {
 	// disable now because we don't enable sharding
-	return
 
 	// pool.mu.Lock()
 	// defer pool.mu.Unlock()

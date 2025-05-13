@@ -103,7 +103,7 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	}
 
 	if opts.BusyTimeout == 0 {
-		opts.BusyTimeout = 5000 // 5 seconds
+		opts.BusyTimeout = 15000
 	}
 
 	if opts.ThreadsCount == 0 {
@@ -253,6 +253,10 @@ CREATE TABLE root (
 		if err != nil {
 			return err
 		}
+		err = sql.treeWrite.Exec("PRAGMA synchronous=OFF;")
+		if err != nil {
+			return err
+		}
 		err = sql.treeWrite.Exec("PRAGMA journal_mode=WAL;")
 		if err != nil {
 			return err
@@ -305,6 +309,10 @@ CREATE INDEX leaf_orphan_idx ON leaf_orphan (at DESC);`)
 		if err != nil {
 			return err
 		}
+		err = sql.leafWrite.Exec("PRAGMA synchronous=OFF;")
+		if err != nil {
+			return err
+		}
 		err = sql.leafWrite.Exec("PRAGMA journal_mode=WAL;")
 		if err != nil {
 			return err
@@ -346,6 +354,26 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	if err != nil {
 		return err
 	}
+	err = sql.treeWrite.Exec("PRAGMA locking_mode=EXCLUSIVE;")
+	if err != nil {
+		return err
+	}
+	err = sql.treeWrite.Exec("PRAGMA journal_mode=WAL;")
+	if err != nil {
+		return err
+	}
+	err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA analysis_limit=%d;", defaultAnalysisLimit))
+	if err != nil {
+		return err
+	}
+	err = sql.treeWrite.Exec("PRAGMA temp_store=MEMORY;")
+	if err != nil {
+		return err
+	}
+	err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA temp_store_size=%d;", sql.opts.TempStoreSize))
+	if err != nil {
+		return err
+	}
 
 	if err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", sql.opts.walPages)); err != nil {
 		return err
@@ -358,6 +386,26 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 
 	err = sql.leafWrite.Exec("PRAGMA synchronous=OFF;")
 	// err = sql.leafWrite.Exec("PRAGMA synchronous=NORMAL;")
+	if err != nil {
+		return err
+	}
+	err = sql.leafWrite.Exec("PRAGMA locking_mode=EXCLUSIVE;")
+	if err != nil {
+		return err
+	}
+	err = sql.leafWrite.Exec("PRAGMA journal_mode=WAL;")
+	if err != nil {
+		return err
+	}
+	err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA analysis_limit=%d;", defaultAnalysisLimit))
+	if err != nil {
+		return err
+	}
+	err = sql.leafWrite.Exec("PRAGMA temp_store=MEMORY;")
+	if err != nil {
+		return err
+	}
+	err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA temp_store_size=%d;", sql.opts.TempStoreSize))
 	if err != nil {
 		return err
 	}
@@ -380,7 +428,8 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 		sql.opts.ConnArgs = "mode=ro"
 	}
 
-	conn, err = gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
+	openMode := gosqlite.OPEN_READONLY | gosqlite.OPEN_NOMUTEX
+	conn, err = gosqlite.Open(sql.opts.treeConnectionString(), openMode)
 	sql.opts.ConnArgs = connArgs
 
 	if err != nil {
@@ -420,7 +469,8 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", sql.opts.BusyTimeout))
+	busyTimeout := sql.opts.BusyTimeout * 3
+	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", busyTimeout))
 	if err != nil {
 		return nil, err
 	}
@@ -433,6 +483,10 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 		return nil, err
 	}
 	err = conn.Exec("PRAGMA query_only=ON;")
+	if err != nil {
+		return nil, err
+	}
+	err = conn.Exec("PRAGMA locking_mode=NORMAL;")
 	if err != nil {
 		return nil, err
 	}
