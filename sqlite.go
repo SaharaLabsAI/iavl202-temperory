@@ -10,6 +10,7 @@ import (
 
 	"github.com/dustin/go-humanize"
 	"github.com/eatonphil/gosqlite"
+	"github.com/klauspost/compress/s2"
 	api "github.com/kocubinski/costor-api"
 	"golang.org/x/sync/errgroup"
 
@@ -644,17 +645,26 @@ func (sql *SqliteDb) nextShard(_ int64) (int64, error) {
 func (sql *SqliteDb) SaveRoot(version int64, node *Node) error {
 	if node != nil {
 		buf := bufPool.Get().(*bytes.Buffer)
+		defer bufPool.Put(buf)
+
+		buf.Reset()
 		err := node.BytesWithBuffer(buf)
 		if err != nil {
 			return err
 		}
-		bz := buf.Bytes()
+
+		compressBuf := bufPool.Get().(*bytes.Buffer)
+		defer bufPool.Put(compressBuf)
+
+		compressBuf.Reset()
+		cb := s2.Encode(compressBuf.Bytes(), buf.Bytes())
+
 		err = sql.treeWrite.Exec("INSERT OR REPLACE INTO root(version, node_version, node_sequence, bytes) VALUES (?, ?, ?, ?)",
-			version, node.nodeKey.Version(), int(node.nodeKey.Sequence()), bz)
+			version, node.nodeKey.Version(), int(node.nodeKey.Sequence()), cb)
 		if err != nil {
 			return err
 		}
-		bufPool.Put(buf)
+
 		return nil
 	}
 	// for an empty root a sentinel is saved

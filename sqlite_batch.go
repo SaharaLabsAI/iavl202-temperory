@@ -8,6 +8,8 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/eatonphil/gosqlite"
 
+	"github.com/klauspost/compress/s2"
+
 	"github.com/cosmos/iavl/v2/metrics"
 )
 
@@ -133,6 +135,9 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 	buf := bufPool.Get().(*bytes.Buffer)
 	defer bufPool.Put(buf)
 
+	compressBuf := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(compressBuf)
+
 	err := b.newChangeLogBatch()
 	if err != nil {
 		return 0, err
@@ -146,7 +151,10 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 			return 0, err
 		}
 
-		if err = b.leafInsert.Exec(leaf.nodeKey.Version(), int(leaf.nodeKey.Sequence()), leaf.key, buf.Bytes()); err != nil {
+		compressBuf.Reset()
+		cb := s2.Encode(compressBuf.Bytes(), buf.Bytes())
+
+		if err = b.leafInsert.Exec(leaf.nodeKey.Version(), int(leaf.nodeKey.Sequence()), leaf.key, cb); err != nil {
 			return 0, err
 		}
 
@@ -216,6 +224,9 @@ func (b *sqliteBatch) saveBranches() (n int64, err error) {
 	buf := bufPool.Get().(*bytes.Buffer)
 	defer bufPool.Put(buf)
 
+	compressBuf := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(compressBuf)
+
 	if err = b.newTreeBatch(shardID); err != nil {
 		return 0, err
 	}
@@ -224,12 +235,14 @@ func (b *sqliteBatch) saveBranches() (n int64, err error) {
 		b.treeCount++
 
 		buf.Reset()
-
 		if err := node.BytesWithBuffer(buf); err != nil {
 			return 0, err
 		}
 
-		if err = b.treeInsert.Exec(node.nodeKey.Version(), int(node.nodeKey.Sequence()), buf.Bytes()); err != nil {
+		compressBuf.Reset()
+		cb := s2.Encode(compressBuf.Bytes(), buf.Bytes())
+
+		if err = b.treeInsert.Exec(node.nodeKey.Version(), int(node.nodeKey.Sequence()), cb); err != nil {
 			return 0, err
 		}
 

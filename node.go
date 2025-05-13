@@ -12,6 +12,8 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/klauspost/compress/s2"
+
 	encoding "github.com/cosmos/iavl/v2/internal"
 )
 
@@ -426,6 +428,14 @@ func EncodeBytes(w io.Writer, bz []byte) error {
 
 // MakeNode constructs a *Node from an encoded byte slice.
 func MakeNode(pool *NodePool, nodeKey NodeKey, buf []byte) (*Node, error) {
+	decBuf := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(decBuf)
+
+	buf, err := s2.Decode(decBuf.Bytes(), buf)
+	if err != nil {
+		return nil, err
+	}
+
 	// Read node header (height, size, version, key).
 	height, n, err := encoding.DecodeVarint(buf)
 	if err != nil {
@@ -592,6 +602,14 @@ func NewImportNode(key, value []byte, version int64, height int8) *Node {
 }
 
 func extractValue(buf []byte) ([]byte, error) {
+	decBuf := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(decBuf)
+
+	buf, err := s2.Decode(decBuf.Bytes(), buf)
+	if err != nil {
+		return nil, err
+	}
+
 	// Read node header (height, size, version, key).
 	height, n, err := encoding.DecodeVarint(buf)
 	if err != nil {
