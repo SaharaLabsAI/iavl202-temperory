@@ -18,7 +18,7 @@ import (
 const defaultSQLitePath = "/tmp/iavl2"
 const defaultShardID = 1
 const defaultMaxPoolSize = 100
-const defaultPageSize = 4096 * 8
+const defaultPageSize = 4096 * 8 // 32K
 const defaultThreadsCount = 8
 
 type SqliteDbOptions struct {
@@ -74,16 +74,17 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	if opts.Mode == 0 {
 		opts.Mode = gosqlite.OPEN_READWRITE | gosqlite.OPEN_CREATE | gosqlite.OPEN_NOMUTEX
 	}
+	// Disable mmap size completely
 	if opts.MmapSize == 0 {
 		// 256M
-		opts.MmapSize = 256 * 1024 * 1024
+		// opts.MmapSize = 256 * 1024 * 1024
 	}
 	if opts.WalSize == 0 {
 		opts.WalSize = 1024 * 1024 * 100
 	}
 	if opts.CacheSize == 0 {
-		// 256M
-		opts.CacheSize = -256 * 1024
+		// 512M
+		opts.CacheSize = -512 * 1024
 	}
 	if opts.TempStoreSize == 0 {
 		// 200M
