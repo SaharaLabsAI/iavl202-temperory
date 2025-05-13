@@ -21,7 +21,7 @@ const defaultShardID = 1
 const defaultMaxPoolSize = 200
 const defaultPageSize = 4096 * 8 // 32K
 const defaultThreadsCount = 8
-const defaultAnalysisLimit = 3000
+const defaultAnalysisLimit = 2000
 
 type SqliteDbOptions struct {
 	Path          string
