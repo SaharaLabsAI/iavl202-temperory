@@ -77,8 +77,7 @@ func (c *SqliteReadConn) ResetImmutableAfterVersionChanged() error {
 		c.opts.ConnArgs = "mode=ro"
 	}
 
-	openMode := gosqlite.OPEN_READONLY | gosqlite.OPEN_NOMUTEX
-	conn, err := gosqlite.Open(c.opts.treeConnectionString(), openMode)
+	conn, err := gosqlite.Open(c.opts.treeImmutableConnectionString(), openReadOnlyMode)
 	c.opts.ConnArgs = connArgs
 
 	if err != nil {

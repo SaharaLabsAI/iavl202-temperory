@@ -25,6 +25,8 @@ const defaultThreadsCount = 8
 const defaultAnalysisLimit = 2000
 const PageSize8K = 8192
 
+const openReadOnlyMode = gosqlite.OPEN_READONLY | gosqlite.OPEN_NOMUTEX
+
 var (
 	Force8KPageSize        = "0"
 	isForce8KPageSize      = false
@@ -157,6 +159,10 @@ func (opts SqliteDbOptions) leafConnectionString() string {
 
 func (opts SqliteDbOptions) treeConnectionString() string {
 	return fmt.Sprintf("file:%s/tree.sqlite%s", opts.Path, opts.connArgs())
+}
+
+func (opts SqliteDbOptions) treeImmutableConnectionString() string {
+	return fmt.Sprintf("file:%s/tree.sqlite%s", opts.Path, "mode=ro&immutable=1")
 }
 
 func (opts SqliteDbOptions) EstimateMmapSize() (uint64, error) {
@@ -430,8 +436,7 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 		sql.opts.ConnArgs = "mode=ro"
 	}
 
-	openMode := gosqlite.OPEN_READONLY | gosqlite.OPEN_NOMUTEX
-	conn, err = gosqlite.Open(sql.opts.treeConnectionString(), openMode)
+	conn, err = gosqlite.Open(sql.opts.treeConnectionString(), openReadOnlyMode)
 	sql.opts.ConnArgs = connArgs
 
 	if err != nil {
@@ -645,10 +650,11 @@ func (sql *SqliteDb) SaveRoot(version int64, node *Node) error {
 }
 
 func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
-	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
+	conn, err := gosqlite.Open(sql.opts.treeImmutableConnectionString(), openReadOnlyMode)
 	if err != nil {
 		return nil, err
 	}
+
 	rootQuery, err := conn.Prepare("SELECT node_version, node_sequence, bytes FROM root WHERE version = ? LIMIT 1", version)
 	if err != nil {
 		return nil, err
@@ -1054,7 +1060,7 @@ func (sql *SqliteDb) GetAt(version int64, key []byte) ([]byte, error) {
 }
 
 func (sql *SqliteDb) HasRoot(version int64) (bool, error) {
-	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
+	conn, err := gosqlite.Open(sql.opts.treeImmutableConnectionString(), openReadOnlyMode)
 	if err != nil {
 		return false, err
 	}
@@ -1084,7 +1090,7 @@ func (sql *SqliteDb) HasRoot(version int64) (bool, error) {
 }
 
 func (sql *SqliteDb) latestRoot() (version int64, err error) {
-	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), sql.opts.Mode)
+	conn, err := gosqlite.Open(sql.opts.treeImmutableConnectionString(), openReadOnlyMode)
 	if err != nil {
 		return 0, err
 	}
