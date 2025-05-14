@@ -48,7 +48,7 @@ func (sql *SqliteDb) Snapshot(ctx context.Context, tree *Tree) error {
 	snapshot := &sqliteSnapshot{
 		ctx:       ctx,
 		sql:       sql,
-		batchSize: 200_000,
+		batchSize: 400_000,
 		version:   version,
 		log:       sql.logger,
 		getLeft: func(node *Node) *Node {
@@ -113,7 +113,7 @@ func IngestSnapshot(conn *gosqlite.Conn, prefix string, version int64, nextFn fu
 		insert    *gosqlite.Stmt
 		tableName = fmt.Sprintf("snapshot_%s_%d", prefix, version)
 		ordinal   int
-		batchSize = 200_000
+		batchSize = 400_000
 		log       = logz.Logger.With().Str("prefix", prefix).Logger()
 		step      func() (*Node, error)
 		lastWrite = time.Now()

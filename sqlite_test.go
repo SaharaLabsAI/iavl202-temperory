@@ -53,7 +53,7 @@ func TestBuildSqlite(t *testing.T) {
 	require.NoError(t, err)
 
 	startTime := time.Now()
-	batchSize := 200_000
+	batchSize := 400_000
 	// set to -1 to run the full set of 40M nodes
 	limit := 600_000
 	// nodeBz := new(bytes.Buffer)
