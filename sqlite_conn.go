@@ -142,11 +142,6 @@ func (c *SqliteReadConn) ResetImmutableAfterVersionChanged() error {
 		return err
 	}
 
-	err = conn.Exec(fmt.Sprintf("PRAGMA threads=%d;", c.opts.ThreadsCount))
-	if err != nil {
-		return err
-	}
-
 	err = conn.Exec("PRAGMA read_uncommitted=OFF;")
 	if err != nil {
 		return err
@@ -157,10 +152,16 @@ func (c *SqliteReadConn) ResetImmutableAfterVersionChanged() error {
 		return err
 	}
 
-	err = conn.Exec(fmt.Sprintf("PRAGMA sqlite_stmt_cache=%d;", c.opts.StatementCache))
-	if err != nil {
-		return err
-	}
+	// Below configuration may cause issues
+	// err = conn.Exec(fmt.Sprintf("PRAGMA threads=%d;", c.opts.ThreadsCount))
+	// if err != nil {
+	// 	return err
+	// }
+
+	// err = conn.Exec(fmt.Sprintf("PRAGMA sqlite_stmt_cache=%d;", c.opts.StatementCache))
+	// if err != nil {
+	// 	return err
+	// }
 
 	c.conn = conn
 

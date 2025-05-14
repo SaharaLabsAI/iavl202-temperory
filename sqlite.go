@@ -478,15 +478,6 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	busyTimeout := sql.opts.BusyTimeout * 3
-	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", busyTimeout))
-	if err != nil {
-		return nil, err
-	}
-	err = conn.Exec(fmt.Sprintf("PRAGMA threads=%d;", sql.opts.ThreadsCount))
-	if err != nil {
-		return nil, err
-	}
 	err = conn.Exec("PRAGMA read_uncommitted=ON;")
 	if err != nil {
 		return nil, err
@@ -495,10 +486,21 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = conn.Exec(fmt.Sprintf("PRAGMA sqlite_stmt_cache=%d;", sql.opts.StatementCache))
-	if err != nil {
-		return nil, err
-	}
+
+	// Below configuration may cause issues
+	// busyTimeout := sql.opts.BusyTimeout * 3
+	// err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", busyTimeout))
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// err = conn.Exec(fmt.Sprintf("PRAGMA threads=%d;", sql.opts.ThreadsCount))
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// err = conn.Exec(fmt.Sprintf("PRAGMA sqlite_stmt_cache=%d;", sql.opts.StatementCache))
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	c := NewSqliteReadConn(conn, &sql.opts, sql.logger)
 
