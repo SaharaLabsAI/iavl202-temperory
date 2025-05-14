@@ -31,7 +31,7 @@ func TestTree_Hash(t *testing.T) {
 	opts.Until = 100
 	opts.UntilHash = "0101e1d6f3158dcb7221acd7ed36ce19f2ef26847ffea7ce69232e362539e5cf"
 	treeOpts := TreeOptions{
-		HeightFilter: 1, StateStorage: true, EvictionDepth: 16, MetricsProxy: metrics.NewStructMetrics(),
+		HeightFilter: 1, StateStorage: true, EvictionDepth: 20, MetricsProxy: metrics.NewStructMetrics(),
 	}
 
 	testStart := time.Now()
