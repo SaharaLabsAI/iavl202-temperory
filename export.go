@@ -82,6 +82,8 @@ func (e *Exporter) preOrderNext(node *Node) {
 		return
 	}
 	e.preOrderNext(right)
+
+	e.out <- node
 }
 
 func (e *Exporter) Next() (*SnapshotNode, error) {
