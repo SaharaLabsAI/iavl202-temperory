@@ -21,7 +21,7 @@ type Exporter struct {
 func (tree *Tree) Export(order TraverseOrderType) *Exporter {
 	exporter := &Exporter{
 		tree:  tree,
-		out:   make(chan *Node),
+		out:   make(chan *Node, 1024),
 		errCh: make(chan error),
 	}
 
