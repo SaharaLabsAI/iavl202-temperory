@@ -69,6 +69,7 @@ func (c *SqliteReadConn) ResetImmutableAfterVersionChanged() error {
 		if err := c.Close(); err != nil {
 			return err
 		}
+		c.conn = nil
 	}
 
 	connArgs := c.opts.ConnArgs
@@ -395,18 +396,22 @@ func (c *SqliteReadConn) Close() error {
 		if err := c.queryLeaf.Close(); err != nil {
 			return err
 		}
+		c.queryLeaf = nil
 	}
+
 	if c.queryKV != nil {
 		if err := c.queryKV.Close(); err != nil {
 			return err
 		}
+		c.queryKV = nil
 	}
 
-	for _, q := range c.shardQueries {
+	for k, q := range c.shardQueries {
 		err := q.Close()
 		if err != nil {
 			return err
 		}
+		delete(c.shardQueries, k)
 	}
 
 	return c.conn.Close()
