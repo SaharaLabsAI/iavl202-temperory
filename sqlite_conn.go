@@ -127,7 +127,7 @@ func (c *SqliteReadConn) ResetImmutableAfterVersionChanged() error {
 		return err
 	}
 
-	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", c.opts.BusyTimeout))
+	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", 10_000))
 	if err != nil {
 		return err
 	}
