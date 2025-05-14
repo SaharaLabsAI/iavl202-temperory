@@ -12,6 +12,8 @@ const (
 	PostOrder
 )
 
+const maxStackSize = 1000
+
 type Exporter struct {
 	tree  *Tree
 	out   chan *Node
@@ -21,7 +23,7 @@ type Exporter struct {
 func (tree *Tree) Export(order TraverseOrderType) *Exporter {
 	exporter := &Exporter{
 		tree:  tree,
-		out:   make(chan *Node, 1024),
+		out:   make(chan *Node),
 		errCh: make(chan error),
 	}
 
@@ -40,50 +42,113 @@ func (tree *Tree) Export(order TraverseOrderType) *Exporter {
 	return exporter
 }
 
-func (e *Exporter) postOrderNext(node *Node) {
-	if node.isLeaf() {
-		e.out <- node
+func (e *Exporter) postOrderNext(root *Node) {
+	if root == nil {
 		return
 	}
 
-	left, err := node.getLeftNode(e.tree)
-	if err != nil {
-		e.errCh <- err
-		return
-	}
-	e.postOrderNext(left)
+	stack := []*Node{root}
+	visited := make(map[*Node]bool)
+	tempOutCh := make(chan struct{}, 1) // Signal channel for stack flow control
 
-	right, err := node.getRightNode(e.tree)
-	if err != nil {
-		e.errCh <- err
-		return
-	}
-	e.postOrderNext(right)
+	for len(stack) > 0 {
+		node := stack[len(stack)-1]
 
-	e.out <- node
+		if node.isLeaf() {
+			stack = stack[:len(stack)-1]
+
+			e.out <- node
+			select {
+			case tempOutCh <- struct{}{}:
+			default:
+			}
+			continue
+		}
+
+		if visited[node] {
+			stack = stack[:len(stack)-1]
+
+			e.out <- node
+			select {
+			case tempOutCh <- struct{}{}:
+			default:
+			}
+			continue
+		}
+
+		if len(stack) >= maxStackSize {
+			<-tempOutCh
+			continue
+		}
+
+		visited[node] = true
+
+		right, err := node.getRightNode(e.tree)
+		if err != nil {
+			e.errCh <- err
+			return
+		}
+
+		left, err := node.getLeftNode(e.tree)
+		if err != nil {
+			e.errCh <- err
+			return
+		}
+
+		if right != nil {
+			stack = append(stack, right)
+		}
+
+		if left != nil {
+			stack = append(stack, left)
+		}
+	}
 }
 
-func (e *Exporter) preOrderNext(node *Node) {
-	if node.isLeaf() {
+func (e *Exporter) preOrderNext(root *Node) {
+	if root == nil {
+		return
+	}
+
+	stack := []*Node{root}
+	tempOutCh := make(chan struct{}, 1) // Signal channel for stack flow control
+
+	for len(stack) > 0 {
+		if len(stack) >= maxStackSize {
+			<-tempOutCh
+			continue
+		}
+
+		n := len(stack) - 1
+		node := stack[n]
+		stack = stack[:n]
+
 		e.out <- node
-		return
-	}
+		select {
+		case tempOutCh <- struct{}{}:
+		default:
+		}
 
-	left, err := node.getLeftNode(e.tree)
-	if err != nil {
-		e.errCh <- err
-		return
-	}
-	e.preOrderNext(left)
+		if !node.isLeaf() {
+			right, err := node.getRightNode(e.tree)
+			if err != nil {
+				e.errCh <- err
+				return
+			}
+			if right != nil {
+				stack = append(stack, right)
+			}
 
-	right, err := node.getRightNode(e.tree)
-	if err != nil {
-		e.errCh <- err
-		return
+			left, err := node.getLeftNode(e.tree)
+			if err != nil {
+				e.errCh <- err
+				return
+			}
+			if left != nil {
+				stack = append(stack, left)
+			}
+		}
 	}
-	e.preOrderNext(right)
-
-	e.out <- node
 }
 
 func (e *Exporter) Next() (*SnapshotNode, error) {
