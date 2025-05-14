@@ -12,6 +12,7 @@ import (
 
 	"github.com/dustin/go-humanize"
 	"github.com/eatonphil/gosqlite"
+	"github.com/klauspost/compress/s2"
 	api "github.com/kocubinski/costor-api"
 	"github.com/kocubinski/costor-api/logz"
 )
@@ -166,6 +167,12 @@ func IngestSnapshot(conn *gosqlite.Conn, prefix string, version int64, nextFn fu
 		}
 		ordinal++
 
+		buf := bufPool.Get().(*bytes.Buffer)
+		defer bufPool.Put(buf)
+
+		compressBuf := bufPool.Get().(*bytes.Buffer)
+		defer bufPool.Put(compressBuf)
+
 		node := &Node{
 			key:           snapshotNode.Key,
 			subtreeHeight: snapshotNode.Height,
@@ -175,9 +182,17 @@ func IngestSnapshot(conn *gosqlite.Conn, prefix string, version int64, nextFn fu
 			node.value = snapshotNode.Value
 			node.size = 1
 			node._hash()
-			nodeBz, err := node.Bytes()
+
+			buf.Reset()
+			err := node.BytesWithBuffer(buf)
 			if err != nil {
 				return nil, err
+			}
+
+			nodeBz := buf.Bytes()
+			if !isDisableS2Compression {
+				compressBuf.Reset()
+				nodeBz = s2.Encode(compressBuf.Bytes(), buf.Bytes())
 			}
 			if err = insert.Exec(ordinal, snapshotNode.Version, ordinal, nodeBz); err != nil {
 				return nil, err
@@ -204,9 +219,16 @@ func IngestSnapshot(conn *gosqlite.Conn, prefix string, version int64, nextFn fu
 		node.leftNode = nil
 		node.rightNode = nil
 
-		nodeBz, err := node.Bytes()
+		buf.Reset()
+		err = node.BytesWithBuffer(buf)
 		if err != nil {
 			return nil, err
+		}
+
+		nodeBz := buf.Bytes()
+		if !isDisableS2Compression {
+			compressBuf.Reset()
+			nodeBz = s2.Encode(compressBuf.Bytes(), buf.Bytes())
 		}
 		if err = insert.Exec(ordinal, snapshotNode.Version, ordinal, nodeBz); err != nil {
 			return nil, err
@@ -439,10 +461,24 @@ func (snap *sqliteSnapshot) writeStep(node *Node) error {
 	snap.ordinal++
 	// Pre-order, NLR traversal
 	// Visit this node
-	nodeBz, err := node.Bytes()
+	buf := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(buf)
+
+	compressBuf := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(compressBuf)
+
+	buf.Reset()
+	err := node.BytesWithBuffer(buf)
 	if err != nil {
 		return err
 	}
+
+	nodeBz := buf.Bytes()
+	if !isDisableS2Compression {
+		compressBuf.Reset()
+		nodeBz = s2.Encode(compressBuf.Bytes(), buf.Bytes())
+	}
+
 	err = snap.snapshotInsert.Exec(snap.ordinal, node.nodeKey.Version(), int(node.nodeKey.Sequence()), nodeBz)
 	if err != nil {
 		return err
@@ -695,9 +731,22 @@ func (snap *sqliteSnapshot) restorePreOrderStep(nextFn func() (*SnapshotNode, er
 }
 
 func (snap *sqliteSnapshot) writeSnapNode(node *Node, version int64, ordinal, sequence, count int) error {
-	nodeBz, err := node.Bytes()
+	buf := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(buf)
+
+	compressBuf := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(compressBuf)
+
+	buf.Reset()
+	err := node.BytesWithBuffer(buf)
 	if err != nil {
 		return err
+	}
+
+	nodeBz := buf.Bytes()
+	if !isDisableS2Compression {
+		compressBuf.Reset()
+		nodeBz = s2.Encode(compressBuf.Bytes(), buf.Bytes())
 	}
 	if err = snap.snapshotInsert.Exec(ordinal, version, sequence, nodeBz); err != nil {
 		return err
