@@ -242,7 +242,7 @@ func (pool *SqliteReadonlyConnPool) GetVersionDescLeafIterator(version int64, li
 	pool.kvItrIdx++
 	idx = pool.kvItrIdx
 
-	stmt, err = conn.Prepare("SELECT key, bytes, version FROM changelog.leaf WHERE bytes IS NOT NULL AND version <= ? ORDER BY version DESC LIMIT ?;")
+	stmt, err = conn.Prepare("SELECT key, bytes, version FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE bytes IS NOT NULL AND version <= ? ORDER BY version DESC) WHERE rn = 1 LIMIT ?;")
 	if err != nil {
 		return nil, idx, err
 	}
