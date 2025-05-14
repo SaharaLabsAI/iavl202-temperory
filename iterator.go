@@ -413,6 +413,29 @@ func (tree *Tree) ReverseIteratorAt(version int64, start, end []byte) (Iterator,
 	return kvItr, nil
 }
 
+func (tree *Tree) IteratorVersionDescLeaves(version int64, limit int) (Iterator, error) {
+	var err error
+	kvItr := &KVIterator{
+		sql:     tree.sql,
+		valid:   true,
+		metrics: tree.metricsProxy,
+	}
+
+	kvItr.itrStmt, kvItr.itrIdx, err = tree.sql.readPool.GetVersionDescLeafIterator(version, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	if tree.metricsProxy != nil {
+		tree.metricsProxy.IncrCounter(1, "iavl_v2", "iterator", "open")
+	}
+
+	kvItr.Next()
+
+	return kvItr, err
+
+}
+
 func (tree *Tree) WrongBranchHashIterator(start, end int64) (Iterator, error) {
 	var err error
 	itr := &WrongBranchHashIterator{

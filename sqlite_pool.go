@@ -229,3 +229,30 @@ func (pool *SqliteReadonlyConnPool) GetHeightOneBranchesIterator(conn *SqliteRea
 
 	return stmt, nil
 }
+
+func (pool *SqliteReadonlyConnPool) GetVersionDescLeafIterator(version int64, limit int) (stmt *gosqlite.Stmt, idx int, err error) {
+	conn, err := pool.GetConn()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	pool.kvItrIdx++
+	idx = pool.kvItrIdx
+
+	stmt, err = conn.Prepare("SELECT key, bytes, version FROM changelog.leaf WHERE bytes IS NOT NULL AND version <= ? ORDER BY version DESC LIMIT ?;")
+	if err != nil {
+		return nil, idx, err
+	}
+
+	if err = stmt.Bind(version, limit); err != nil {
+		return nil, idx, err
+	}
+
+	pool.kvIterators[idx] = stmt
+	pool.kvItrConns[idx] = conn
+
+	return stmt, idx, nil
+}
