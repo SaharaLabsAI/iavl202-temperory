@@ -159,10 +159,6 @@ func (opts SqliteDbOptions) treeConnectionString() string {
 	return fmt.Sprintf("file:%s/tree.sqlite%s", opts.Path, opts.connArgs())
 }
 
-func (opts SqliteDbOptions) kvConnectionString() string {
-	return fmt.Sprintf("file:%s/kv.sqlite%s", opts.Path, opts.connArgs())
-}
-
 func (opts SqliteDbOptions) EstimateMmapSize() (uint64, error) {
 	opts.Logger.Info("calculate mmap size")
 	opts.Logger.Info(fmt.Sprintf("leaf connection string: %s", opts.leafConnectionString()))
