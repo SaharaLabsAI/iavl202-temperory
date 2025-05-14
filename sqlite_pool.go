@@ -174,7 +174,15 @@ func (pool *SqliteReadonlyConnPool) GetKVIteratorQuery(version int64, start, end
 	switch {
 	case start == nil && end == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf(`SELECT key, bytes FROM ( SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE bytes IS NOT NULL AND version <= ? ORDER BY key %s) WHERE rn = 1;`, suffix))
+			fmt.Sprintf(`SELECT l.key, l.bytes 
+FROM changelog.leaf l
+INNER JOIN (
+    SELECT key, MAX(version) as max_version
+    FROM changelog.leaf
+    WHERE bytes IS NOT NULL AND version <= ?
+    GROUP BY key
+) m ON l.key = m.key AND l.version = m.max_version
+ORDER BY l.key %s;`, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -183,7 +191,15 @@ func (pool *SqliteReadonlyConnPool) GetKVIteratorQuery(version int64, start, end
 		}
 	case start == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf(`SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE bytes IS NOT NULL AND version <= ? AND %s ORDER BY key %s) WHERE rn = 1;`, endKey, suffix))
+			fmt.Sprintf(`SELECT l.key, l.bytes 
+FROM changelog.leaf l
+INNER JOIN (
+    SELECT key, MAX(version) as max_version
+    FROM changelog.leaf
+    WHERE bytes IS NOT NULL AND version <= ? AND %s
+    GROUP BY key
+) m ON l.key = m.key AND l.version = m.max_version
+ORDER BY l.key %s;`, endKey, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -192,7 +208,15 @@ func (pool *SqliteReadonlyConnPool) GetKVIteratorQuery(version int64, start, end
 		}
 	case end == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf(`SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE bytes IS NOT NULL AND version <= ? AND key >= ? ORDER BY key %s) WHERE rn = 1;`, suffix))
+			fmt.Sprintf(`SELECT l.key, l.bytes 
+FROM changelog.leaf l
+INNER JOIN (
+    SELECT key, MAX(version) as max_version
+    FROM changelog.leaf
+    WHERE bytes IS NOT NULL AND version <= ? AND key >= ?
+    GROUP BY key
+) m ON l.key = m.key AND l.version = m.max_version
+ORDER BY l.key %s;`, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
@@ -201,7 +225,15 @@ func (pool *SqliteReadonlyConnPool) GetKVIteratorQuery(version int64, start, end
 		}
 	default:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf(`SELECT key, bytes FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) AS rn FROM changelog.leaf WHERE bytes IS NOT NULL AND version <= ? AND key >= ? AND %s ORDER BY key %s) WHERE rn = 1;`, endKey, suffix))
+			fmt.Sprintf(`SELECT l.key, l.bytes 
+FROM changelog.leaf l
+INNER JOIN (
+    SELECT key, MAX(version) as max_version
+    FROM changelog.leaf
+    WHERE bytes IS NOT NULL AND version <= ? AND key >= ? AND %s
+    GROUP BY key
+) m ON l.key = m.key AND l.version = m.max_version
+ORDER BY l.key %s;`, endKey, suffix))
 		if err != nil {
 			return nil, idx, err
 		}
