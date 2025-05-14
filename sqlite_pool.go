@@ -174,7 +174,7 @@ func (pool *SqliteReadonlyConnPool) GetKVIteratorQuery(version int64, start, end
 	switch {
 	case start == nil && end == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf(`SELECT l.key, l.bytes 
+			fmt.Sprintf(`SELECT l.key, l.bytes
 FROM changelog.leaf l
 INNER JOIN (
     SELECT key, MAX(version) as max_version
@@ -191,7 +191,7 @@ ORDER BY l.key %s;`, suffix))
 		}
 	case start == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf(`SELECT l.key, l.bytes 
+			fmt.Sprintf(`SELECT l.key, l.bytes
 FROM changelog.leaf l
 INNER JOIN (
     SELECT key, MAX(version) as max_version
@@ -208,7 +208,7 @@ ORDER BY l.key %s;`, endKey, suffix))
 		}
 	case end == nil:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf(`SELECT l.key, l.bytes 
+			fmt.Sprintf(`SELECT l.key, l.bytes
 FROM changelog.leaf l
 INNER JOIN (
     SELECT key, MAX(version) as max_version
@@ -225,7 +225,7 @@ ORDER BY l.key %s;`, suffix))
 		}
 	default:
 		stmt, err = conn.Prepare(
-			fmt.Sprintf(`SELECT l.key, l.bytes 
+			fmt.Sprintf(`SELECT l.key, l.bytes
 FROM changelog.leaf l
 INNER JOIN (
     SELECT key, MAX(version) as max_version

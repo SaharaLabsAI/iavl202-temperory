@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -159,10 +158,6 @@ func (opts SqliteDbOptions) leafConnectionString() string {
 
 func (opts SqliteDbOptions) treeConnectionString() string {
 	return fmt.Sprintf("file:%s/tree.sqlite%s", opts.Path, opts.connArgs())
-}
-
-func (opts SqliteDbOptions) treeImmutableConnectionString() string {
-	return fmt.Sprintf("file:%s/tree.sqlite%s", opts.Path, "mode=ro&immutable=1")
 }
 
 func (opts SqliteDbOptions) EstimateMmapSize() (uint64, error) {
@@ -431,14 +426,7 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 		err  error
 	)
 
-	connArgs := sql.opts.ConnArgs
-	if !strings.Contains(sql.opts.ConnArgs, "mode=memory&cache=shared") {
-		sql.opts.ConnArgs = "mode=ro"
-	}
-
 	conn, err = gosqlite.Open(sql.opts.treeConnectionString(), openReadOnlyMode)
-	sql.opts.ConnArgs = connArgs
-
 	if err != nil {
 		return nil, err
 	}
@@ -650,7 +638,13 @@ func (sql *SqliteDb) SaveRoot(version int64, node *Node) error {
 }
 
 func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
-	conn, err := gosqlite.Open(sql.opts.treeImmutableConnectionString(), openReadOnlyMode)
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), openReadOnlyMode)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	err = conn.Exec("PRAGMA immutable=1;")
 	if err != nil {
 		return nil, err
 	}
@@ -659,6 +653,7 @@ func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer rootQuery.Close()
 
 	hasRow, err := rootQuery.Step()
 	if !hasRow {
@@ -687,15 +682,10 @@ func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
 		}
 	}
 
-	if err := rootQuery.Close(); err != nil {
-		return nil, err
-	}
 	if err := sql.ResetShardQueries(); err != nil {
 		return nil, err
 	}
-	if err := conn.Close(); err != nil {
-		return nil, err
-	}
+
 	return root, nil
 }
 
@@ -1060,7 +1050,13 @@ func (sql *SqliteDb) GetAt(version int64, key []byte) ([]byte, error) {
 }
 
 func (sql *SqliteDb) HasRoot(version int64) (bool, error) {
-	conn, err := gosqlite.Open(sql.opts.treeImmutableConnectionString(), openReadOnlyMode)
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), openReadOnlyMode)
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close()
+
+	err = conn.Exec("PRAGMA immutable=1;")
 	if err != nil {
 		return false, err
 	}
@@ -1069,6 +1065,7 @@ func (sql *SqliteDb) HasRoot(version int64) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer rootQuery.Close()
 
 	hasRow, err := rootQuery.Step()
 	if !hasRow {
@@ -1078,19 +1075,17 @@ func (sql *SqliteDb) HasRoot(version int64) (bool, error) {
 		return false, err
 	}
 
-	if err := rootQuery.Close(); err != nil {
-		return false, err
-	}
-
-	if err := conn.Close(); err != nil {
-		return false, err
-	}
-
 	return true, nil
 }
 
 func (sql *SqliteDb) latestRoot() (version int64, err error) {
-	conn, err := gosqlite.Open(sql.opts.treeImmutableConnectionString(), openReadOnlyMode)
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(), openReadOnlyMode)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	err = conn.Exec("PRAGMA immutable=1;")
 	if err != nil {
 		return 0, err
 	}
@@ -1099,6 +1094,7 @@ func (sql *SqliteDb) latestRoot() (version int64, err error) {
 	if err != nil {
 		return 0, err
 	}
+	defer rootQuery.Close()
 
 	hasRow, err := rootQuery.Step()
 	if !hasRow {
@@ -1110,14 +1106,6 @@ func (sql *SqliteDb) latestRoot() (version int64, err error) {
 
 	err = rootQuery.Scan(&version)
 	if err != nil {
-		return 0, err
-	}
-
-	if err := rootQuery.Close(); err != nil {
-		return 0, err
-	}
-
-	if err := conn.Close(); err != nil {
 		return 0, err
 	}
 

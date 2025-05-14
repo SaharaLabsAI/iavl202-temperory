@@ -3,7 +3,6 @@ package iavl
 import (
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -72,14 +71,7 @@ func (c *SqliteReadConn) ResetImmutableAfterVersionChanged() error {
 		c.conn = nil
 	}
 
-	connArgs := c.opts.ConnArgs
-	if !strings.Contains(c.opts.ConnArgs, "mode=memory&cache=shared") {
-		c.opts.ConnArgs = "mode=ro"
-	}
-
-	conn, err := gosqlite.Open(c.opts.treeImmutableConnectionString(), openReadOnlyMode)
-	c.opts.ConnArgs = connArgs
-
+	conn, err := gosqlite.Open(c.opts.treeConnectionString(), openReadOnlyMode)
 	if err != nil {
 		return err
 	}
