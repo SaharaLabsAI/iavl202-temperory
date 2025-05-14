@@ -478,10 +478,6 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = conn.Exec("PRAGMA read_uncommitted=ON;")
-	if err != nil {
-		return nil, err
-	}
 	err = conn.Exec("PRAGMA query_only=ON;")
 	if err != nil {
 		return nil, err
@@ -498,6 +494,10 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 	// 	return nil, err
 	// }
 	// err = conn.Exec(fmt.Sprintf("PRAGMA sqlite_stmt_cache=%d;", sql.opts.StatementCache))
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// err = conn.Exec("PRAGMA read_uncommitted=ON;")
 	// if err != nil {
 	// 	return nil, err
 	// }
