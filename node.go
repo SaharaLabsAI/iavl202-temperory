@@ -481,22 +481,21 @@ func MakeNode(pool *NodePool, nodeKey NodeKey, buf []byte) (*Node, error) {
 		}
 		node.value = val
 	} else {
-		leftNodeKey, n, err := encoding.DecodeBytes(buf)
+		leftNk, n, err := decodeNodeKey(buf)
+		// leftNodeKey, n, err := encoding.DecodeBytes(buf)
 		if err != nil {
 			return nil, fmt.Errorf("decoding node.leftKey, %w", err)
 		}
 		buf = buf[n:]
 
-		rightNodeKey, _, err := encoding.DecodeBytes(buf)
+		rightNk, _, err := decodeNodeKey(buf)
+		// rightNodeKey, _, err := encoding.DecodeBytes(buf)
 		if err != nil {
 			return nil, fmt.Errorf("decoding node.rightKey, %w", err)
 		}
 
-		var leftNk, rightNk NodeKey
-		copy(leftNk[:], leftNodeKey)
-		copy(rightNk[:], rightNodeKey)
-		node.leftNodeKey = leftNk
-		node.rightNodeKey = rightNk
+		node.leftNodeKey = *leftNk
+		node.rightNodeKey = *rightNk
 	}
 	return node, nil
 }
@@ -685,4 +684,37 @@ func extractValue(buf []byte) ([]byte, error) {
 	}
 
 	return val, nil
+}
+
+func decodeNodeKey(bz []byte) (*NodeKey, int, error) {
+	s, n, err := encoding.DecodeUvarint(bz)
+	if err != nil {
+		return nil, n, err
+	}
+	// Make sure size doesn't overflow. ^uint(0) >> 1 will help determine the
+	// max int value variably on 32-bit and 64-bit machines. We also doublecheck
+	// that size is positive.
+	size := int(s)
+	if s >= uint64(^uint(0)>>1) || size < 0 {
+		return nil, n, fmt.Errorf("invalid out of range length %v decoding []byte", s)
+	}
+	if size != 12 {
+		return nil, n, fmt.Errorf("unexpected node key size %d", size)
+	}
+	// Make sure end index doesn't overflow. We know n>0 from decodeUvarint().
+	end := n + size
+	if end < n {
+		return nil, n, fmt.Errorf("invalid out of range length %v decoding []byte", size)
+	}
+	// Make sure the end index is within bounds.
+	if len(bz) < end {
+		return nil, n, fmt.Errorf("insufficient bytes decoding []byte of length %v", size)
+	}
+
+	version := binary.BigEndian.Uint64(bz[n : n+8])
+	sequence := binary.BigEndian.Uint32(bz[n+8 : end])
+
+	key := NewNodeKey(int64(version), sequence)
+
+	return &key, end, nil
 }
