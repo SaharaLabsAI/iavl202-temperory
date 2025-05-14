@@ -2,9 +2,8 @@ package iavl
 
 import (
 	"fmt"
-	"os"
-	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/eatonphil/gosqlite"
 
@@ -13,6 +12,8 @@ import (
 
 type SqliteReadonlyConnPool struct {
 	opts *SqliteDbOptions
+
+	treeVersion atomic.Uint64
 
 	mu    sync.Mutex
 	conns []*SqliteReadConn
@@ -44,94 +45,8 @@ func NewSqliteReadonlyConnPool(opts *SqliteDbOptions, MaxPoolSize int) (*SqliteR
 	return pool, nil
 }
 
-func (pool *SqliteReadonlyConnPool) createReadConn() (*SqliteReadConn, error) {
-	connArgs := pool.opts.ConnArgs
-	if !strings.Contains(pool.opts.ConnArgs, "mode=memory&cache=shared") {
-		pool.opts.ConnArgs = "mode=ro"
-	}
-
-	openMode := gosqlite.OPEN_READONLY | gosqlite.OPEN_NOMUTEX
-	conn, err := gosqlite.Open(pool.opts.treeConnectionString(), openMode)
-	pool.opts.ConnArgs = connArgs
-
-	if err != nil {
-		return nil, err
-	}
-
-	// Configure connection
-	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS changelog;", pool.opts.leafConnectionString()))
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-
-	err = conn.Exec("PRAGMA journal_mode=WAL;")
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-
-	pageSize := max(os.Getpagesize(), defaultPageSize)
-	if isForce8KPageSize {
-		pageSize = PageSize8K
-	}
-	err = conn.Exec(fmt.Sprintf("PRAGMA page_size=%d;", pageSize))
-	if err != nil {
-		return nil, err
-	}
-
-	err = conn.Exec("PRAGMA synchronous=OFF;")
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-
-	err = conn.Exec("PRAGMA automatic_index=OFF;")
-	if err != nil {
-		return nil, err
-	}
-
-	err = conn.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 0))
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-
-	err = conn.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", 100))
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-
-	busyTimeout := pool.opts.BusyTimeout * 3
-	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", busyTimeout))
-	if err != nil {
-		return nil, err
-	}
-
-	err = conn.Exec(fmt.Sprintf("PRAGMA threads=%d;", pool.opts.ThreadsCount))
-	if err != nil {
-		return nil, err
-	}
-
-	err = conn.Exec("PRAGMA read_uncommitted=ON;")
-	if err != nil {
-		return nil, err
-	}
-
-	err = conn.Exec("PRAGMA query_only=ON;")
-	if err != nil {
-		return nil, err
-	}
-
-	err = conn.Exec(fmt.Sprintf("PRAGMA sqlite_stmt_cache=%d;", pool.opts.StatementCache))
-	if err != nil {
-		return nil, err
-	}
-
-	readConn := NewSqliteReadConn(conn, pool.opts, pool.logger)
-
-	return readConn, nil
+func (pool *SqliteReadonlyConnPool) SetTreeVersion(version uint64) {
+	pool.treeVersion.Store(version)
 }
 
 func (pool *SqliteReadonlyConnPool) GetConn() (*SqliteReadConn, error) {
@@ -148,11 +63,7 @@ func (pool *SqliteReadonlyConnPool) GetConn() (*SqliteReadConn, error) {
 		return nil, fmt.Errorf("service busy, no resource available")
 	}
 
-	conn, err := pool.createReadConn()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create new connection: %w", err)
-	}
-
+	conn := NewSqliteImmutableReadConn(&pool.treeVersion, pool.opts, pool.logger)
 	conn.inUse = true
 	pool.conns = append(pool.conns, conn)
 

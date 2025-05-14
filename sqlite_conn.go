@@ -2,7 +2,10 @@ package iavl
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/eatonphil/gosqlite"
 )
@@ -10,12 +13,14 @@ import (
 type SqliteReadConn struct {
 	conn *gosqlite.Conn
 
+	treeVersion *atomic.Uint64
+	imVersion   uint64
+
 	queryLeaf *gosqlite.Stmt
 	queryKV   *gosqlite.Stmt
 
-	shards            *VersionRange
-	shardQueries      map[int64]*gosqlite.Stmt
-	pendingResetShard bool
+	shards       *VersionRange
+	shardQueries map[int64]*gosqlite.Stmt
 
 	opts *SqliteDbOptions
 
@@ -27,17 +32,145 @@ type SqliteReadConn struct {
 
 func NewSqliteReadConn(conn *gosqlite.Conn, opts *SqliteDbOptions, logger Logger) *SqliteReadConn {
 	return &SqliteReadConn{
-		conn:              conn,
-		shards:            &VersionRange{},
-		shardQueries:      make(map[int64]*gosqlite.Stmt),
-		opts:              opts,
-		inUse:             false,
-		pendingResetShard: false,
-		logger:            logger,
+		conn:         conn,
+		treeVersion:  nil,
+		imVersion:    0,
+		shards:       &VersionRange{},
+		shardQueries: make(map[int64]*gosqlite.Stmt),
+		opts:         opts,
+		inUse:        false,
+		logger:       logger,
 	}
 }
 
+func NewSqliteImmutableReadConn(treeVersion *atomic.Uint64, opts *SqliteDbOptions, logger Logger) *SqliteReadConn {
+	return &SqliteReadConn{
+		treeVersion:  treeVersion,
+		imVersion:    treeVersion.Load(),
+		shards:       &VersionRange{},
+		shardQueries: make(map[int64]*gosqlite.Stmt),
+		opts:         opts,
+		inUse:        false,
+		logger:       logger,
+	}
+}
+
+func (c *SqliteReadConn) ResetImmutableAfterVersionChanged() error {
+	// Not a immutable read connection
+	if c.treeVersion == nil {
+		return nil
+	}
+
+	if c.imVersion >= c.treeVersion.Load() && c.conn != nil {
+		return nil
+	}
+
+	if c.conn != nil {
+		if err := c.Close(); err != nil {
+			return err
+		}
+	}
+
+	connArgs := c.opts.ConnArgs
+	if !strings.Contains(c.opts.ConnArgs, "mode=memory&cache=shared") {
+		c.opts.ConnArgs = "mode=ro"
+	}
+
+	openMode := gosqlite.OPEN_READONLY | gosqlite.OPEN_NOMUTEX
+	conn, err := gosqlite.Open(c.opts.treeConnectionString(), openMode)
+	c.opts.ConnArgs = connArgs
+
+	if err != nil {
+		return err
+	}
+
+	// Configure connection
+	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS changelog;", c.opts.leafConnectionString()))
+	if err != nil {
+		conn.Close()
+		return err
+	}
+
+	err = conn.Exec("PRAGMA journal_mode=WAL;")
+	if err != nil {
+		conn.Close()
+		return err
+	}
+
+	err = conn.Exec("PRAGMA immutable=1;")
+	if err != nil {
+		conn.Close()
+		return err
+	}
+
+	pageSize := max(os.Getpagesize(), defaultPageSize)
+	if isForce8KPageSize {
+		pageSize = PageSize8K
+	}
+	err = conn.Exec(fmt.Sprintf("PRAGMA page_size=%d;", pageSize))
+	if err != nil {
+		return err
+	}
+
+	err = conn.Exec("PRAGMA synchronous=OFF;")
+	if err != nil {
+		conn.Close()
+		return err
+	}
+
+	err = conn.Exec("PRAGMA automatic_index=OFF;")
+	if err != nil {
+		return err
+	}
+
+	err = conn.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 0))
+	if err != nil {
+		conn.Close()
+		return err
+	}
+
+	err = conn.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", 100))
+	if err != nil {
+		conn.Close()
+		return err
+	}
+
+	busyTimeout := c.opts.BusyTimeout * 3
+	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", busyTimeout))
+	if err != nil {
+		return err
+	}
+
+	err = conn.Exec(fmt.Sprintf("PRAGMA threads=%d;", c.opts.ThreadsCount))
+	if err != nil {
+		return err
+	}
+
+	err = conn.Exec("PRAGMA read_uncommitted=OFF;")
+	if err != nil {
+		return err
+	}
+
+	err = conn.Exec("PRAGMA query_only=ON;")
+	if err != nil {
+		return err
+	}
+
+	err = conn.Exec(fmt.Sprintf("PRAGMA sqlite_stmt_cache=%d;", c.opts.StatementCache))
+	if err != nil {
+		return err
+	}
+
+	c.conn = conn
+
+	return nil
+}
+
 func (c *SqliteReadConn) Prepare(statement string, args ...interface{}) (*gosqlite.Stmt, error) {
+	if err := c.ResetImmutableAfterVersionChanged(); err != nil {
+		return nil, err
+	}
+
 	return c.conn.Prepare(statement, args...)
 }
 
@@ -46,6 +179,10 @@ func (c *SqliteReadConn) getVersioned(version int64, key []byte) ([]byte, error)
 
 	if len(key) == 0 {
 		return nil, fmt.Errorf("get value with key length 0")
+	}
+
+	if err := c.ResetImmutableAfterVersionChanged(); err != nil {
+		return nil, err
 	}
 
 	var err error
@@ -85,6 +222,10 @@ func (c *SqliteReadConn) getVersioned(version int64, key []byte) ([]byte, error)
 func (c *SqliteReadConn) getLeaf(pool *NodePool, nodeKey NodeKey) (*Node, error) {
 	defer c.MarkIdle()
 
+	if err := c.ResetImmutableAfterVersionChanged(); err != nil {
+		return nil, err
+	}
+
 	var err error
 	if c.queryLeaf == nil {
 		c.queryLeaf, err = c.conn.Prepare("SELECT bytes FROM changelog.leaf WHERE version = ? AND sequence = ? LIMIT 1")
@@ -123,15 +264,8 @@ func (c *SqliteReadConn) getLeaf(pool *NodePool, nodeKey NodeKey) (*Node, error)
 func (c *SqliteReadConn) getNode(pool *NodePool, nodeKey NodeKey) (*Node, error) {
 	defer c.MarkIdle()
 
-	c.mu.Lock()
-	shouldResetShard := c.pendingResetShard
-	c.mu.Unlock()
-
-	if shouldResetShard {
-		err := c.ResetShardQueries()
-		if err != nil {
-			return nil, err
-		}
+	if err := c.ResetImmutableAfterVersionChanged(); err != nil {
+		return nil, err
 	}
 
 	q, err := c.getShardQuery(nodeKey.Version())
@@ -198,10 +332,6 @@ func (c *SqliteReadConn) ResetShardQueries() error {
 	// disable now because we don't enable sharding
 	return nil
 
-	// c.mu.Lock()
-	// c.pendingResetShard = false
-	// c.mu.Unlock()
-	//
 	// treeWrite, err := gosqlite.Open(c.opts.treeConnectionString(), c.opts.Mode)
 	// if err != nil {
 	// 	return err
@@ -251,13 +381,6 @@ func (c *SqliteReadConn) ResetShardQueries() error {
 	// }
 	//
 	// return nil
-}
-
-func (c *SqliteReadConn) SetPendingResetShard() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.pendingResetShard = true
 }
 
 func (c *SqliteReadConn) MarkIdle() {

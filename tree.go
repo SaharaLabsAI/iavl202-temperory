@@ -167,9 +167,9 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.version++
 	tree.resetSequences()
 
-	if err := tree.sql.closeHangingIterators(); err != nil {
-		return nil, 0, err
-	}
+	// if err := tree.sql.closeHangingIterators(); err != nil {
+	// 	return nil, 0, err
+	// }
 
 	rootHash := tree.computeHash()
 
@@ -182,6 +182,7 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.deleted = make(map[string]bool)
 	tree.cache = make(map[string][]byte)
 
+	tree.sql.readPool.SetTreeVersion(uint64(tree.version))
 	if err := tree.sql.ResetShardQueries(); err != nil {
 		return nil, tree.version, err
 	}
@@ -1118,9 +1119,9 @@ func (tree *Tree) WorkingHash() []byte {
 	tree.version++
 	tree.resetSequences()
 
-	if err := tree.sql.closeHangingIterators(); err != nil {
-		panic(err)
-	}
+	// if err := tree.sql.closeHangingIterators(); err != nil {
+	// 	panic(err)
+	// }
 
 	hash := tree.computeHash()
 
