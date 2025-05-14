@@ -32,7 +32,7 @@ type sqliteBatch struct {
 }
 
 func (b *sqliteBatch) newChangeLogBatch() (err error) {
-	if err = b.sql.leafWrite.BeginImmediate(); err != nil {
+	if err = b.sql.leafWrite.Begin(); err != nil {
 		return err
 	}
 	b.leafInsert, err = b.sql.leafWrite.Prepare("INSERT OR REPLACE INTO leaf (version, sequence, key, bytes) VALUES (?, ?, ?, ?)")
@@ -78,7 +78,7 @@ func (b *sqliteBatch) execBranchOrphan(nodeKey NodeKey) error {
 }
 
 func (b *sqliteBatch) newTreeBatch(shardID int64) (err error) {
-	if err = b.sql.treeWrite.BeginImmediate(); err != nil {
+	if err = b.sql.treeWrite.Begin(); err != nil {
 		return err
 	}
 	b.treeInsert, err = b.sql.treeWrite.Prepare(fmt.Sprintf(
