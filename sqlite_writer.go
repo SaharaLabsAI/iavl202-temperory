@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/dustin/go-humanize"
 	"github.com/eatonphil/gosqlite"
+	"golang.org/x/sys/unix"
 )
 
 type pruneSignal struct {
@@ -56,7 +58,15 @@ func (sql *SqliteDb) newSQLWriter() *sqlWriter {
 }
 
 func (w *sqlWriter) start(ctx context.Context) {
+	treeStarted := make(chan struct{})
+	leafStarted := make(chan struct{})
+
 	go func() {
+		runtime.LockOSThread()
+		unix.Setpriority(unix.PRIO_PROCESS, 0, -20)
+
+		close(treeStarted)
+
 		err := w.treeLoop(ctx)
 		if err != nil {
 			w.logger.Error("tree loop failed", "error", err)
@@ -64,12 +74,20 @@ func (w *sqlWriter) start(ctx context.Context) {
 		}
 	}()
 	go func() {
+		runtime.LockOSThread()
+		unix.Setpriority(unix.PRIO_PROCESS, 0, -20)
+
+		close(leafStarted)
+
 		err := w.leafLoop(ctx)
 		if err != nil {
 			w.logger.Error("leaf loop failed", "error", err)
 			os.Exit(1)
 		}
 	}()
+
+	<-treeStarted
+	<-leafStarted
 }
 
 func (w *sqlWriter) leafLoop(ctx context.Context) error {
