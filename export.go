@@ -13,19 +13,23 @@ const (
 )
 
 const maxStackSize = 10_000
-const maxOutChanSize = 10_000
+const maxOutChanSize = 12_000
 
 type Exporter struct {
-	tree  *Tree
-	out   chan *Node
-	errCh chan error
+	tree    *Tree
+	out     chan *Node
+	errCh   chan error
+	count   int
+	version int64
 }
 
 func (tree *Tree) Export(order TraverseOrderType) *Exporter {
 	exporter := &Exporter{
-		tree:  tree,
-		out:   make(chan *Node, maxOutChanSize),
-		errCh: make(chan error),
+		tree:    tree,
+		out:     make(chan *Node, maxOutChanSize),
+		errCh:   make(chan error),
+		count:   0,
+		version: tree.version.Load(),
 	}
 
 	go func(traverseOrder TraverseOrderType) {
@@ -79,6 +83,7 @@ func (e *Exporter) postOrderNext(root *Node) {
 
 		if len(stack) >= maxStackSize {
 			<-tempOutCh
+			e.tree.sql.logger.Warn("creating snapshot", "height", e.version, "node exported", e.count)
 			continue
 		}
 
@@ -117,6 +122,7 @@ func (e *Exporter) preOrderNext(root *Node) {
 	for len(stack) > 0 {
 		if len(stack) >= maxStackSize {
 			<-tempOutCh
+			e.tree.sql.logger.Warn("creating snapshot", "height", e.version, "node exported", e.count)
 			continue
 		}
 
@@ -166,6 +172,7 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 			}
 			return nil, ErrorExportDone
 		}
+		e.count++
 		return &SnapshotNode{
 			Key:     node.key,
 			Value:   node.value,
@@ -178,6 +185,7 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 			select {
 			case node, ok := <-e.out:
 				if ok {
+					e.count++
 					return &SnapshotNode{
 						Key:     node.key,
 						Value:   node.value,
@@ -207,6 +215,7 @@ func (e *Exporter) NextRawNode() (*Node, error) {
 			}
 			return nil, ErrorExportDone
 		}
+		e.count++
 		return node, nil
 	case err, ok := <-e.errCh:
 		if !ok {
@@ -214,6 +223,7 @@ func (e *Exporter) NextRawNode() (*Node, error) {
 			select {
 			case node, ok := <-e.out:
 				if ok {
+					e.count++
 					return node, nil
 				}
 			default:
@@ -242,9 +252,11 @@ func (tree *Tree) ExportVersion(version int64, order TraverseOrderType) (*Export
 	}
 
 	exporter := &Exporter{
-		tree:  imTree,
-		out:   make(chan *Node),
-		errCh: make(chan error),
+		tree:    imTree,
+		out:     make(chan *Node),
+		errCh:   make(chan error),
+		count:   0,
+		version: version,
 	}
 
 	if imTree.root == nil {
