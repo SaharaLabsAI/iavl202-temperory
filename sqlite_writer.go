@@ -13,6 +13,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const pruneBatchSize = 10
+
 type pruneSignal struct {
 	pruneVersion int64
 }
@@ -214,9 +216,9 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 		w.leafResult <- res
 	}
 	for {
-		if pruneVersion != 0 {
-			select {
-			case sig := <-w.leafCh:
+		select {
+		case sig := <-w.leafCh:
+			if pruneVersion != 0 {
 				if err = commitPrune(); err != nil {
 					return fmt.Errorf("interrupt leaf prune failed in commit; %w", err)
 				}
@@ -224,34 +226,47 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 				if err = beginPruneBatch(pruneVersion); err != nil {
 					return fmt.Errorf("interrupt leaf prune failed in begin; %w", err)
 				}
-			case sig := <-w.leafPruneCh:
-				w.logger.Warn(fmt.Sprintf("leaf prune signal received while pruning version=%d next=%d", pruneVersion, sig.pruneVersion))
-				nextPruneVersion = sig.pruneVersion
-			case <-ctx.Done():
-				return nil
-			default:
-				err = stepPruning()
-				if err != nil {
-					return fmt.Errorf("failed to step pruning; %w", err)
-				}
-			}
-		} else {
-			select {
-			case sig := <-w.leafCh:
+			} else {
 				saveLeaves(sig)
-			case sig := <-w.leafPruneCh:
-				err = startPrune(sig.pruneVersion)
-				if err != nil {
-					return fmt.Errorf("failed to start leaf prune; %w", err)
+			}
+		default:
+			if pruneVersion != 0 {
+				select {
+				case sig := <-w.leafCh:
+					if err = commitPrune(); err != nil {
+						return fmt.Errorf("interrupt leaf prune failed in commit; %w", err)
+					}
+					saveLeaves(sig)
+					if err = beginPruneBatch(pruneVersion); err != nil {
+						return fmt.Errorf("interrupt leaf prune failed in begin; %w", err)
+					}
+				case sig := <-w.leafPruneCh:
+					w.logger.Warn(fmt.Sprintf("leaf prune signal received while pruning version=%d next=%d", pruneVersion, sig.pruneVersion))
+					nextPruneVersion = sig.pruneVersion
+				case <-ctx.Done():
+					return nil
+				default:
+					err = stepPruning()
+					if err != nil {
+						return fmt.Errorf("failed to step pruning; %w", err)
+					}
 				}
-			case <-ctx.Done():
-				return nil
+			} else {
+				select {
+				case sig := <-w.leafCh:
+					saveLeaves(sig)
+				case sig := <-w.leafPruneCh:
+					err = startPrune(sig.pruneVersion)
+					if err != nil {
+						return fmt.Errorf("failed to start leaf prune; %w", err)
+					}
+				case <-ctx.Done():
+					return nil
+				}
 			}
 		}
 	}
 }
-
-const pruneBatchSize = 500_000
 
 func (w *sqlWriter) treeLoop(ctx context.Context) error {
 	var (
@@ -388,10 +403,9 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 	}
 
 	for {
-		// if there is pruning in progress support interrupt and immediate continuation
-		if pruneVersion != 0 {
-			select {
-			case sig := <-w.treeCh:
+		select {
+		case sig := <-w.treeCh:
+			if pruneVersion != 0 {
 				if err := commitPrune(); err != nil {
 					return err
 				}
@@ -399,29 +413,44 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 				if err := beginPruneBatch(pruneVersion); err != nil {
 					return err
 				}
-			case sig := <-w.treePruneCh:
-				w.logger.Warn(fmt.Sprintf("tree prune signal received while pruning version=%d next=%d", pruneVersion, sig.pruneVersion))
-				nextPruneVersion = sig.pruneVersion
-			case <-ctx.Done():
-				return nil
-			default:
-				// continue pruning if no signal
-				err := stepPruning()
-				if err != nil {
-					return err
-				}
-			}
-		} else {
-			select {
-			case sig := <-w.treeCh:
+			} else {
 				saveTree(sig)
-			case sig := <-w.treePruneCh:
-				err := startPrune(sig.pruneVersion)
-				if err != nil {
-					return err
+			}
+		default:
+			if pruneVersion != 0 {
+				select {
+				case sig := <-w.treeCh:
+					if err := commitPrune(); err != nil {
+						return err
+					}
+					saveTree(sig)
+					if err := beginPruneBatch(pruneVersion); err != nil {
+						return err
+					}
+				case sig := <-w.treePruneCh:
+					w.logger.Warn(fmt.Sprintf("tree prune signal received while pruning version=%d next=%d", pruneVersion, sig.pruneVersion))
+					nextPruneVersion = sig.pruneVersion
+				case <-ctx.Done():
+					return nil
+				default:
+					// continue pruning if no signal
+					err := stepPruning()
+					if err != nil {
+						return err
+					}
 				}
-			case <-ctx.Done():
-				return nil
+			} else {
+				select {
+				case sig := <-w.treeCh:
+					saveTree(sig)
+				case sig := <-w.treePruneCh:
+					err := startPrune(sig.pruneVersion)
+					if err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return nil
+				}
 			}
 		}
 	}
