@@ -1118,6 +1118,7 @@ func (tree *Tree) returnNode(node *Node) {
 func (tree *Tree) Close() error {
 	if tree.writerCancel != nil {
 		tree.writerCancel()
+		tree.sqlWriter.awaitStop()
 	}
 	return tree.sql.Close()
 }
