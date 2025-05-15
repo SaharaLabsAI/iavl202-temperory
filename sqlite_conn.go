@@ -71,13 +71,13 @@ func (c *SqliteReadConn) ResetImmutableAfterVersionChanged() error {
 		c.conn = nil
 	}
 
-	conn, err := gosqlite.Open(c.opts.treeConnectionString(), openReadOnlyMode)
+	conn, err := gosqlite.Open(c.opts.treeConnectionString(Immutable), openReadOnlyMode)
 	if err != nil {
 		return err
 	}
 
 	// Configure connection
-	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS changelog;", c.opts.leafConnectionString()))
+	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS changelog;", c.opts.leafConnectionString(Immutable)))
 	if err != nil {
 		conn.Close()
 		return err
