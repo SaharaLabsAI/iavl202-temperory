@@ -185,6 +185,10 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.deleted = make(map[string]bool)
 	tree.cache = make(map[string][]byte)
 
+	if err := tree.sql.resetReadConn(); err != nil {
+		return nil, treeVersion, err
+	}
+
 	if err := tree.sql.ResetShardQueries(); err != nil {
 		return nil, treeVersion, err
 	}

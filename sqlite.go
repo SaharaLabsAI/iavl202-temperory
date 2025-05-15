@@ -528,13 +528,24 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 }
 
 func (sql *SqliteDb) resetReadConn() (err error) {
-	if sql.read != nil {
-		err = sql.read.Close()
-		if err != nil {
-			return err
-		}
+	// if sql.read != nil {
+	// 	err = sql.read.Close()
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
+	// sql.read, err = sql.newReadConn()
+
+	if sql.read == nil {
+		sql.read, err = sql.newReadConn()
+		return err
 	}
-	sql.read, err = sql.newReadConn()
+
+	err = sql.read.conn.Exec("PRAGMA query_only=RESET; PRAGMA query_only=ON;")
+	if err != nil {
+		return err
+	}
+
 	return err
 }
 
