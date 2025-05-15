@@ -420,7 +420,7 @@ func (w *sqlWriter) saveTree(tree *Tree) error {
 		// 	Str("module", "sqlite-batch").
 		// 	Str("path", tree.sql.opts.Path).Logger(),
 	}
-	saveSig := &saveSignal{batch: batch, root: tree.root, version: tree.version}
+	saveSig := &saveSignal{batch: batch, root: tree.root, version: tree.version.Load()}
 	w.treeCh <- saveSig
 	w.leafCh <- saveSig
 	treeResult := <-w.treeResult

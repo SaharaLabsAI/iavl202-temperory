@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cosmos/iavl/v2/metrics"
@@ -25,7 +25,7 @@ type nodeDelete struct {
 }
 
 type Tree struct {
-	version      int64
+	version      atomic.Int64
 	root         *Node
 	metrics      metrics.Proxy
 	sql          *SqliteDb
@@ -52,11 +52,10 @@ type Tree struct {
 	isReplaying    bool
 	evictionDepth  int8
 
-	versionLock sync.RWMutex
-	immutable   bool
-	rootHashed  bool
-	cache       map[string][]byte
-	deleted     map[string]bool
+	immutable  bool
+	rootHashed bool
+	cache      map[string][]byte
+	deleted    map[string]bool
 }
 
 type TreeOptions struct {
@@ -113,7 +112,7 @@ func (tree *Tree) LoadVersion(version int64) (err error) {
 		return nil
 	}
 
-	tree.version = version
+	tree.version.Store(version)
 	if tree.immutable {
 		exists, err := tree.sql.HasRoot(version)
 		if err != nil {
@@ -129,7 +128,7 @@ func (tree *Tree) LoadVersion(version int64) (err error) {
 	tree.workingBytes = 0
 	tree.workingSize = 0
 
-	tree.root, err = tree.sql.LoadRoot(tree.version)
+	tree.root, err = tree.sql.LoadRoot(version)
 	if err != nil {
 		return err
 	}
@@ -149,7 +148,7 @@ func (tree *Tree) LoadSnapshot(version int64, traverseOrder TraverseOrderType) (
 	if v < version {
 		return fmt.Errorf("requested %d found snapshot %d, replay not yet supported", version, v)
 	}
-	tree.version = v
+	tree.version.Store(v)
 	tree.cache = make(map[string][]byte)
 	tree.deleted = make(map[string]bool)
 	return nil
@@ -161,11 +160,10 @@ func (tree *Tree) SaveSnapshot() (err error) {
 }
 
 func (tree *Tree) SaveVersion() ([]byte, int64, error) {
-	tree.versionLock.Lock()
-	defer tree.versionLock.Unlock()
-
-	tree.version++
+	tree.version.Add(1)
 	tree.resetSequences()
+
+	treeVersion := tree.version.Load()
 
 	// if err := tree.sql.closeHangingIterators(); err != nil {
 	// 	return nil, 0, err
@@ -175,16 +173,17 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 
 	err := tree.sqlWriter.saveTree(tree)
 	if err != nil {
-		return nil, tree.version, err
+		return nil, treeVersion, err
 	}
 
 	tree.branchOrphans = nil
 	tree.deleted = make(map[string]bool)
 	tree.cache = make(map[string][]byte)
 
-	tree.sql.readPool.SetTreeVersion(uint64(tree.version))
+	tree.sql.readPool.SetTreeVersion(uint64(treeVersion))
+
 	if err := tree.sql.ResetShardQueries(); err != nil {
-		return nil, tree.version, err
+		return nil, treeVersion, err
 	}
 
 	tree.leafOrphans = nil
@@ -192,7 +191,7 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.branches = nil
 	tree.deletes = nil
 
-	return rootHash, tree.version, nil
+	return rootHash, treeVersion, nil
 }
 
 // ComputeHash the node and its descendants recursively. This usually mutates all
@@ -218,6 +217,8 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 		visited bool // Flag to track if children have been visited
 	}
 
+	treeVersion := tree.version.Load()
+
 	// Stack to replace recursion
 	stack := make([]nodeWithDepth, 0)
 	stack = append(stack, nodeWithDepth{node: node, depth: depth, visited: false})
@@ -237,14 +238,14 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 			stack = stack[:len(stack)-1]
 
 			// new leaves are written every version
-			if current.node.nodeKey.Version() == tree.version {
+			if current.node.nodeKey.Version() == treeVersion {
 				tree.leaves = append(tree.leaves, current.node)
 			}
 			continue // No further processing for leaf nodes
 		}
 
 		// Skip non-dirty or non-current version branch nodes
-		if !current.node.dirty || current.node.nodeKey.Version() != tree.version {
+		if !current.node.dirty || current.node.nodeKey.Version() != treeVersion {
 			// Pop the node as we're skipping it
 			stack = stack[:len(stack)-1]
 			continue
@@ -304,8 +305,10 @@ func (tree *Tree) Get(key []byte) ([]byte, error) {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_get")
 	}
 
+	treeVersion := tree.version.Load()
+
 	if tree.immutable {
-		return tree.sql.GetAt(tree.version, key)
+		return tree.sql.GetAt(treeVersion, key)
 	}
 
 	if val, exists := tree.cache[string(key)]; exists {
@@ -315,7 +318,7 @@ func (tree *Tree) Get(key []byte) ([]byte, error) {
 		return nil, nil
 	}
 
-	return tree.sql.GetAt(tree.version, key)
+	return tree.sql.GetAt(treeVersion, key)
 
 	// var (
 	// 	res []byte
@@ -335,8 +338,10 @@ func (tree *Tree) Has(key []byte) (bool, error) {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_has")
 	}
 
+	treeVersion := tree.version.Load()
+
 	if tree.immutable {
-		val, err := tree.sql.GetAt(tree.version, key)
+		val, err := tree.sql.GetAt(treeVersion, key)
 		if err != nil {
 			return false, err
 		}
@@ -350,7 +355,7 @@ func (tree *Tree) Has(key []byte) (bool, error) {
 		return false, nil
 	}
 
-	val, err := tree.sql.GetAt(tree.version, key)
+	val, err := tree.sql.GetAt(treeVersion, key)
 	if err != nil {
 		return false, err
 	}
@@ -870,7 +875,7 @@ func (tree *Tree) Height() int8 {
 
 func (tree *Tree) nextNodeKey() NodeKey {
 	tree.branchSequence++
-	nk := NewNodeKey(tree.version+1, tree.branchSequence)
+	nk := NewNodeKey(tree.version.Load()+1, tree.branchSequence)
 	return nk
 }
 
@@ -879,7 +884,7 @@ func (tree *Tree) nextLeafNodeKey() NodeKey {
 	if tree.leafSequence < leafSequenceStart {
 		panic("leaf sequence underflow")
 	}
-	nk := NewNodeKey(tree.version+1, tree.leafSequence)
+	nk := NewNodeKey(tree.version.Load()+1, tree.leafSequence)
 	return nk
 }
 
@@ -891,7 +896,7 @@ func (tree *Tree) resetSequences() {
 func (tree *Tree) mutateNode(node *Node) {
 	// this second conditional is only relevant in replay; or more specifically, in cases where hashing has been
 	// deferred between versions
-	if node.hash == nil && node.nodeKey.Version() == tree.version+1 {
+	if node.hash == nil && node.nodeKey.Version() == tree.version.Load()+1 {
 		return
 	}
 	node.hash = nil
@@ -925,7 +930,7 @@ func (tree *Tree) addOrphan(node *Node) {
 
 func (tree *Tree) addDelete(node *Node) {
 	// added and removed in the same version; no op.
-	if node.nodeKey.Version() == tree.version+1 {
+	if node.nodeKey.Version() == tree.version.Load()+1 {
 		return
 	}
 	del := &nodeDelete{
@@ -982,7 +987,7 @@ func (tree *Tree) Hash() []byte {
 }
 
 func (tree *Tree) Version() int64 {
-	return tree.version
+	return tree.version.Load()
 }
 
 func (tree *Tree) replayChangelog(toVersion int64, targetHash []byte) error {
@@ -1045,7 +1050,7 @@ func (tree *Tree) SetInitialVersion(version int64) error {
 
 	var err error
 
-	tree.version = version - 1
+	tree.version.Store(version - 1)
 
 	return err
 }
@@ -1064,10 +1069,7 @@ func (tree *Tree) GetRecent(version int64, key []byte) (bool, []byte, error) {
 }
 
 func (tree *Tree) getRecentRoot(version int64) (bool, *Node) {
-	tree.versionLock.RLock()
-	defer tree.versionLock.RUnlock()
-
-	if version != tree.version {
+	if version != tree.version.Load() {
 		return false, nil
 	}
 
@@ -1113,10 +1115,8 @@ func (tree *Tree) WorkingHash() []byte {
 		return tree.root.hash
 	}
 
-	tree.versionLock.Lock()
-	defer tree.versionLock.Unlock()
-
-	tree.version++
+	oldVersion := tree.version.Load()
+	tree.version.Add(1)
 	tree.resetSequences()
 
 	// if err := tree.sql.closeHangingIterators(); err != nil {
@@ -1125,7 +1125,7 @@ func (tree *Tree) WorkingHash() []byte {
 
 	hash := tree.computeHash()
 
-	tree.version--
+	tree.version.Store(oldVersion)
 	tree.resetSequences()
 
 	return hash
@@ -1150,7 +1150,6 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 	}
 
 	imTree := &Tree{
-		version:         version,
 		immutable:       true,
 		sql:             sql,
 		sqlWriter:       nil,
@@ -1167,6 +1166,8 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 		cache:           make(map[string][]byte),
 		deleted:         make(map[string]bool),
 	}
+
+	imTree.version.Store(version)
 
 	return imTree, nil
 }

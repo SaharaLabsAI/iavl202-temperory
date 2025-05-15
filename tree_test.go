@@ -112,7 +112,7 @@ func TestTreeSanity(t *testing.T) {
 			},
 			hashFn: func(tree *Tree) []byte {
 				rehashTree(tree.root)
-				tree.version++
+				tree.version.Add(1)
 				return tree.root.hash
 			},
 		},

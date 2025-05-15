@@ -39,7 +39,7 @@ type sqliteSnapshot struct {
 }
 
 func (sql *SqliteDb) Snapshot(ctx context.Context, tree *Tree) error {
-	version := tree.version
+	version := tree.version.Load()
 	err := sql.leafWrite.Exec(
 		fmt.Sprintf("CREATE TABLE snapshot_%d (ordinal int, version int, sequence int, bytes blob);", version))
 	if err != nil {

@@ -232,7 +232,7 @@ func (i *TreeIterator) Close() error {
 
 func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err error) {
 	if tree.immutable {
-		return tree.IteratorAt(tree.version, start, end, inclusive)
+		return tree.IteratorAt(tree.version.Load(), start, end, inclusive)
 	}
 
 	itr = &TreeIterator{
@@ -255,7 +255,7 @@ func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err
 
 func (tree *Tree) ReverseIterator(start, end []byte) (itr Iterator, err error) {
 	if tree.immutable {
-		return tree.ReverseIteratorAt(tree.version, start, end)
+		return tree.ReverseIteratorAt(tree.version.Load(), start, end)
 	}
 
 	itr = &TreeIterator{
@@ -399,7 +399,7 @@ func (tree *Tree) ReverseIteratorAt(version int64, start, end []byte) (Iterator,
 		metrics: tree.metricsProxy,
 	}
 
-	kvItr.itrStmt, kvItr.itrIdx, err = tree.sql.getKVIteratorQuery(tree.version, start, end, false, false)
+	kvItr.itrStmt, kvItr.itrIdx, err = tree.sql.getKVIteratorQuery(tree.version.Load(), start, end, false, false)
 	if err != nil {
 		return nil, err
 	}

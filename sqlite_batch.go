@@ -74,7 +74,7 @@ func (b *sqliteBatch) changelogBatchCommit() error {
 }
 
 func (b *sqliteBatch) execBranchOrphan(nodeKey NodeKey) error {
-	return b.treeOrphan.Exec(nodeKey.Version(), int(nodeKey.Sequence()), b.tree.version)
+	return b.treeOrphan.Exec(nodeKey.Version(), int(nodeKey.Sequence()), b.tree.version.Load())
 }
 
 func (b *sqliteBatch) newTreeBatch(shardID int64) (err error) {
@@ -188,7 +188,7 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 
 	for _, orphan := range tree.leafOrphans {
 		b.leafCount++
-		if err = b.leafOrphan.Exec(orphan.Version(), int(orphan.Sequence()), b.tree.version); err != nil {
+		if err = b.leafOrphan.Exec(orphan.Version(), int(orphan.Sequence()), b.tree.version.Load()); err != nil {
 			return 0, err
 		}
 		if err = b.changelogMaybeCommit(); err != nil {
@@ -217,12 +217,12 @@ func (b *sqliteBatch) saveBranches() (n int64, err error) {
 	tree := b.tree
 	b.treeCount = 0
 
-	shardID, err := tree.sql.nextShard(tree.version)
+	shardID, err := tree.sql.nextShard(tree.version.Load())
 	if err != nil {
 		return 0, err
 	}
 	b.logger.Debug(fmt.Sprintf("save branches db=tree version=%d shard=%d orphans=%s",
-		tree.version, shardID, humanize.Comma(int64(len(tree.branchOrphans)))))
+		tree.version.Load(), shardID, humanize.Comma(int64(len(tree.branchOrphans)))))
 
 	buf := bufPool.Get().(*bytes.Buffer)
 	defer bufPool.Put(buf)

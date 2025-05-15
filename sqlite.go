@@ -950,7 +950,7 @@ func (sql *SqliteDb) replayChangelog(tree *Tree, toVersion int64, targetHash []b
 		tree.isReplaying = false
 	}()
 
-	sql.opts.Logger.Info(fmt.Sprintf("replaying changelog from=%d to=%d", tree.version, toVersion), logPath...)
+	sql.opts.Logger.Info(fmt.Sprintf("replaying changelog from=%d to=%d", tree.version.Load(), toVersion), logPath...)
 
 	var q *gosqlite.Stmt
 	var conn *SqliteReadConn
@@ -987,7 +987,7 @@ func (sql *SqliteDb) replayChangelog(tree *Tree, toVersion int64, targetHash []b
 		return err
 	}
 
-	if err = q.Bind(tree.version, toVersion); err != nil {
+	if err = q.Bind(tree.version.Load(), toVersion); err != nil {
 		return err
 	}
 
@@ -1005,7 +1005,7 @@ func (sql *SqliteDb) replayChangelog(tree *Tree, toVersion int64, targetHash []b
 		}
 		if version-1 != lastVersion {
 			tree.leaves, tree.branches, tree.leafOrphans, tree.deletes = nil, nil, nil, nil
-			tree.version = int64(version - 1)
+			tree.version.Store(int64(version - 1))
 			tree.resetSequences()
 			lastVersion = version - 1
 		}
@@ -1044,9 +1044,9 @@ func (sql *SqliteDb) replayChangelog(tree *Tree, toVersion int64, targetHash []b
 	}
 	tree.leaves, tree.branches, tree.leafOrphans, tree.deletes = nil, nil, nil, nil
 	tree.resetSequences()
-	tree.version = toVersion
+	tree.version.Store(toVersion)
 	sql.opts.Logger.Info(fmt.Sprintf("replayed changelog to version=%d count=%s dur=%s root=%v",
-		tree.version, humanize.Comma(count), time.Since(start).Round(time.Millisecond), tree.root), logPath)
+		tree.version.Load(), humanize.Comma(count), time.Since(start).Round(time.Millisecond), tree.root), logPath)
 	return q.Close()
 }
 
