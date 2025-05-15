@@ -610,12 +610,20 @@ func (sql *SqliteDb) Close() error {
 		}
 	}
 
-	if err := sql.leafWrite.Close(); err != nil {
-		return err
+	if sql.leafWrite != nil {
+		if err := sql.leafWrite.Close(); err != nil {
+			return err
+		}
 	}
 
-	if err := sql.treeWrite.Close(); err != nil {
-		return err
+	if sql.treeWrite != nil {
+		if err := sql.treeWrite.Close(); err != nil {
+			return err
+		}
+	}
+
+	if sql.pool != nil {
+		sql.pool = nil
 	}
 
 	return nil
@@ -941,7 +949,11 @@ func (sql *SqliteDb) Revert(version int64) error {
 }
 
 func (sql *SqliteDb) closeHangingIterators() error {
-	return sql.readPool.CloseHangingIterators()
+	if sql.readPool != nil {
+		return sql.readPool.CloseHangingIterators()
+	}
+
+	return nil
 }
 
 func (sql *SqliteDb) replayChangelog(tree *Tree, toVersion int64, targetHash []byte) error {

@@ -189,7 +189,7 @@ func (e *Exporter) NextRawNode() (*Node, error) {
 var ErrorExportDone = errors.New("export done")
 
 func (e *Exporter) Close() error {
-	return e.tree.Close()
+	return e.tree.DiscardImmutableTree()
 }
 
 func (tree *Tree) ExportVersion(version int64, order TraverseOrderType) (*Exporter, error) {

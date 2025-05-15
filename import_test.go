@@ -39,6 +39,7 @@ func Test_ExportImport(t *testing.T) {
 	// Export
 	for sk, tree := range multiTree.Trees {
 		exporter := tree.Export(PostOrder)
+		defer exporter.Close()
 		require.NotNil(t, exporter)
 		for {
 			n, err := exporter.NextRawNode()
