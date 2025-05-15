@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -154,6 +155,11 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 }
 
 func (opts SqliteDbOptions) connArgs(ty ConnectionType) string {
+	// Short circuit for unit tests
+	if strings.Contains(opts.ConnArgs, "mode=memory&cache=shared") {
+		return opts.ConnArgs
+	}
+
 	var args string
 
 	switch ty {
@@ -659,7 +665,6 @@ func (sql *SqliteDb) SaveRoot(version int64, node *Node) error {
 }
 
 func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
-	// Use ReadOnly to fix uint test failure
 	conn, err := gosqlite.Open(sql.opts.treeConnectionString(ReadOnly), openReadOnlyMode)
 	if err != nil {
 		return nil, err
