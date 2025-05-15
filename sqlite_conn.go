@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"sync/atomic"
 
 	"github.com/eatonphil/gosqlite"
 )
@@ -12,8 +11,7 @@ import (
 type SqliteReadConn struct {
 	conn *gosqlite.Conn
 
-	treeVersion *atomic.Uint64
-	imVersion   uint64
+	treeVersion int64
 
 	queryLeaf *gosqlite.Stmt
 	queryKV   *gosqlite.Stmt
@@ -32,8 +30,7 @@ type SqliteReadConn struct {
 func NewSqliteReadConn(conn *gosqlite.Conn, opts *SqliteDbOptions, logger Logger) *SqliteReadConn {
 	return &SqliteReadConn{
 		conn:         conn,
-		treeVersion:  nil,
-		imVersion:    0,
+		treeVersion:  0,
 		shards:       &VersionRange{},
 		shardQueries: make(map[int64]*gosqlite.Stmt),
 		opts:         opts,
@@ -42,10 +39,9 @@ func NewSqliteReadConn(conn *gosqlite.Conn, opts *SqliteDbOptions, logger Logger
 	}
 }
 
-func NewSqliteImmutableReadConn(treeVersion *atomic.Uint64, opts *SqliteDbOptions, logger Logger) *SqliteReadConn {
+func NewSqliteImmutableReadConn(treeVersion int64, opts *SqliteDbOptions, logger Logger) *SqliteReadConn {
 	return &SqliteReadConn{
 		treeVersion:  treeVersion,
-		imVersion:    treeVersion.Load(),
 		shards:       &VersionRange{},
 		shardQueries: make(map[int64]*gosqlite.Stmt),
 		opts:         opts,
@@ -54,13 +50,9 @@ func NewSqliteImmutableReadConn(treeVersion *atomic.Uint64, opts *SqliteDbOption
 	}
 }
 
-func (c *SqliteReadConn) ResetImmutableAfterVersionChanged() error {
-	// Not a immutable read connection
-	if c.treeVersion == nil {
-		return nil
-	}
-
-	if c.imVersion >= c.treeVersion.Load() && c.conn != nil {
+func (c *SqliteReadConn) ResetToTreeVersion(version int64) error {
+	if c.treeVersion >= version {
+		// No need to reset
 		return nil
 	}
 
@@ -76,7 +68,6 @@ func (c *SqliteReadConn) ResetImmutableAfterVersionChanged() error {
 		return err
 	}
 
-	// Configure connection
 	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS changelog;", c.opts.leafConnectionString(Immutable)))
 	if err != nil {
 		conn.Close()
@@ -84,12 +75,6 @@ func (c *SqliteReadConn) ResetImmutableAfterVersionChanged() error {
 	}
 
 	err = conn.Exec("PRAGMA journal_mode=WAL;")
-	if err != nil {
-		conn.Close()
-		return err
-	}
-
-	err = conn.Exec("PRAGMA immutable=1;")
 	if err != nil {
 		conn.Close()
 		return err
@@ -159,10 +144,6 @@ func (c *SqliteReadConn) ResetImmutableAfterVersionChanged() error {
 }
 
 func (c *SqliteReadConn) Prepare(statement string, args ...interface{}) (*gosqlite.Stmt, error) {
-	if err := c.ResetImmutableAfterVersionChanged(); err != nil {
-		return nil, err
-	}
-
 	return c.conn.Prepare(statement, args...)
 }
 
@@ -171,10 +152,6 @@ func (c *SqliteReadConn) getVersioned(version int64, key []byte) ([]byte, error)
 
 	if len(key) == 0 {
 		return nil, fmt.Errorf("get value with key length 0")
-	}
-
-	if err := c.ResetImmutableAfterVersionChanged(); err != nil {
-		return nil, err
 	}
 
 	var err error
@@ -214,10 +191,6 @@ func (c *SqliteReadConn) getVersioned(version int64, key []byte) ([]byte, error)
 func (c *SqliteReadConn) getLeaf(pool *NodePool, nodeKey NodeKey) (*Node, error) {
 	defer c.MarkIdle()
 
-	if err := c.ResetImmutableAfterVersionChanged(); err != nil {
-		return nil, err
-	}
-
 	var err error
 	if c.queryLeaf == nil {
 		c.queryLeaf, err = c.conn.Prepare("SELECT bytes FROM changelog.leaf WHERE version = ? AND sequence = ? LIMIT 1")
@@ -255,10 +228,6 @@ func (c *SqliteReadConn) getLeaf(pool *NodePool, nodeKey NodeKey) (*Node, error)
 
 func (c *SqliteReadConn) getNode(pool *NodePool, nodeKey NodeKey) (*Node, error) {
 	defer c.MarkIdle()
-
-	if err := c.ResetImmutableAfterVersionChanged(); err != nil {
-		return nil, err
-	}
 
 	q, err := c.getShardQuery(nodeKey.Version())
 	if err != nil {

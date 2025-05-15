@@ -98,6 +98,11 @@ func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 		deleted:         make(map[string]bool),
 	}
 
+	tree.version.Store(0)
+	if tree.sql != nil {
+		tree.sql.readPool.LinkTreeVersion(&tree.version)
+	}
+
 	tree.sqlWriter.start(ctx)
 
 	return tree
@@ -179,8 +184,6 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.branchOrphans = nil
 	tree.deleted = make(map[string]bool)
 	tree.cache = make(map[string][]byte)
-
-	tree.sql.readPool.SetTreeVersion(uint64(treeVersion))
 
 	if err := tree.sql.ResetShardQueries(); err != nil {
 		return nil, treeVersion, err

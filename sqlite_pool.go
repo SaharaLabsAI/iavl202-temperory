@@ -13,7 +13,7 @@ import (
 type SqliteReadonlyConnPool struct {
 	opts *SqliteDbOptions
 
-	treeVersion atomic.Uint64
+	treeVersion *atomic.Int64
 
 	mu    sync.Mutex
 	conns []*SqliteReadConn
@@ -45,8 +45,8 @@ func NewSqliteReadonlyConnPool(opts *SqliteDbOptions, MaxPoolSize int) (*SqliteR
 	return pool, nil
 }
 
-func (pool *SqliteReadonlyConnPool) SetTreeVersion(version uint64) {
-	pool.treeVersion.Store(version)
+func (pool *SqliteReadonlyConnPool) LinkTreeVersion(version *atomic.Int64) {
+	pool.treeVersion = version
 }
 
 func (pool *SqliteReadonlyConnPool) GetConn() (*SqliteReadConn, error) {
@@ -56,14 +56,16 @@ func (pool *SqliteReadonlyConnPool) GetConn() (*SqliteReadConn, error) {
 	for _, conn := range pool.conns {
 		if !conn.inUse {
 			conn.inUse = true
+			conn.ResetToTreeVersion(pool.treeVersion.Load())
 			return conn, nil
 		}
 	}
+
 	if len(pool.conns) > pool.opts.MaxPoolSize {
-		return nil, fmt.Errorf("service busy, no resource available")
+		return nil, fmt.Errorf("service busy, try again later")
 	}
 
-	conn := NewSqliteImmutableReadConn(&pool.treeVersion, pool.opts, pool.logger)
+	conn := NewSqliteImmutableReadConn(pool.treeVersion.Load(), pool.opts, pool.logger)
 	conn.inUse = true
 	pool.conns = append(pool.conns, conn)
 
