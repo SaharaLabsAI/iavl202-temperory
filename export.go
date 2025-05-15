@@ -12,7 +12,7 @@ const (
 	PostOrder
 )
 
-const maxStackSize = 1000
+const maxStackSize = 10_000
 const maxOutChanSize = 10_000
 
 type Exporter struct {
