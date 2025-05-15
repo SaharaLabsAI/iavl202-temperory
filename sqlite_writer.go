@@ -432,7 +432,7 @@ func (w *sqlWriter) saveTree(tree *Tree) error {
 	batch := &sqliteBatch{
 		sql:    tree.sql,
 		tree:   tree,
-		size:   400_000,
+		size:   200_000,
 		logger: w.sql.logger,
 		// logger: log.With().
 		// 	Str("module", "sqlite-batch").
