@@ -114,27 +114,50 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 		err              error
 	)
 
-	defer close(w.leafStopCh)
+	defer func() {
+		if orphanQuery != nil {
+			if err := orphanQuery.Close(); err != nil {
+				w.logger.Warn("stop sql writer, leaf orphan query", "err", err)
+			}
+		}
 
-	orphanQuery, err = w.sql.leafWrite.Prepare(`SELECT version, sequence, ROWID FROM leaf_orphan WHERE at <= ? LIMIT ?`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare leaf orphan query; %w", err)
-	}
-	defer orphanQuery.Close()
+		if deleteOrphan != nil {
+			if err := deleteOrphan.Close(); err != nil {
+				w.logger.Warn("stop sql writer, leaf delete orphan", "err", err)
+			}
+		}
 
-	deleteOrphan, err = w.sql.leafWrite.Prepare("DELETE FROM leaf_orphan WHERE ROWID = ?")
-	if err != nil {
-		return fmt.Errorf("failed to prepare leaf orphan delete; %w", err)
-	}
-	defer deleteOrphan.Close()
+		if deleteLeaf != nil {
+			if err := deleteLeaf.Close(); err != nil {
+				w.logger.Warn("stop sql writer, leaf delete leaf", "err", err)
+			}
+		}
 
-	deleteLeaf, err = w.sql.leafWrite.Prepare("DELETE FROM leaf WHERE version = ? and sequence = ? LIMIT 1")
-	if err != nil {
-		return fmt.Errorf("failed to prepare leaf delete; %w", err)
-	}
-	defer deleteLeaf.Close()
+		close(w.leafStopCh)
+	}()
 
 	beginPruneBatch := func(pruneTo int64) error {
+		if orphanQuery == nil {
+			orphanQuery, err = w.sql.leafWrite.Prepare(`SELECT version, sequence, ROWID FROM leaf_orphan WHERE at <= ? LIMIT ?`)
+			if err != nil {
+				return fmt.Errorf("failed to prepare leaf orphan query; %w", err)
+			}
+		}
+
+		if deleteOrphan == nil {
+			deleteOrphan, err = w.sql.leafWrite.Prepare("DELETE FROM leaf_orphan WHERE ROWID = ?")
+			if err != nil {
+				return fmt.Errorf("failed to prepare leaf orphan delete; %w", err)
+			}
+		}
+
+		if deleteLeaf == nil {
+			deleteLeaf, err = w.sql.leafWrite.Prepare("DELETE FROM leaf WHERE version = ? and sequence = ? LIMIT 1")
+			if err != nil {
+				return fmt.Errorf("failed to prepare leaf delete; %w", err)
+			}
+		}
+
 		if err = w.sql.leafWrite.Begin(); err != nil {
 			return fmt.Errorf("failed to begin leaf prune tx; %w", err)
 		}
@@ -156,6 +179,10 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 		return nil
 	}
 	commitPrune := func() error {
+		if err = orphanQuery.Reset(); err != nil {
+			return err
+		}
+
 		if err = w.sql.leafWrite.Commit(); err != nil {
 			return err
 		}
@@ -163,10 +190,6 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 		w.logger.Debug(fmt.Sprintf("commit leaf prune count=%s", humanize.Comma(pruneCount)))
 		if err = w.sql.leafWrite.Exec("PRAGMA wal_checkpoint(RESTART)"); err != nil {
 			return fmt.Errorf("failed to checkpoint; %w", err)
-		}
-
-		if err = orphanQuery.Reset(); err != nil {
-			return err
 		}
 
 		if err = deleteLeaf.Reset(); err != nil {
@@ -302,30 +325,50 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 		// TODO: use map
 		deleteBranch *gosqlite.Stmt
 		deleteOrphan *gosqlite.Stmt
-		err          error
 	)
 
-	defer close(w.treeStopCh)
+	defer func() {
+		if orphanQuery != nil {
+			if err := orphanQuery.Close(); err != nil {
+				w.logger.Warn("stop sql writer, tree orphan query", "err", err)
+			}
+		}
 
-	orphanQuery, err = w.sql.treeWrite.Prepare("SELECT version, sequence, at, ROWID FROM orphan WHERE at <= ? LIMIT ?")
-	if err != nil {
-		return fmt.Errorf("failed to prepare orphan query; %w", err)
-	}
-	defer orphanQuery.Close()
+		if deleteBranch != nil {
+			if err := deleteBranch.Close(); err != nil {
+				w.logger.Warn("stop sql writer, tree delete branch", "err", err)
+			}
+		}
 
-	deleteBranch, err = w.sql.treeWrite.Prepare(fmt.Sprintf("DELETE FROM tree_%d WHERE version = ? AND sequence = ? LIMIT 1", defaultShardID))
-	if err != nil {
-		return fmt.Errorf("failed to prepare delete branch; %w", err)
-	}
-	defer deleteBranch.Close()
+		if deleteOrphan != nil {
+			if err := deleteOrphan.Close(); err != nil {
+				w.logger.Warn("stop sql writer, tree delete orphan", "err", err)
+			}
+		}
 
-	deleteOrphan, err = w.sql.treeWrite.Prepare("DELETE FROM orphan WHERE ROWID = ?")
-	if err != nil {
-		return fmt.Errorf("failed to prepare orphan delete; %w", err)
-	}
-	defer deleteOrphan.Close()
+		close(w.treeStopCh)
+	}()
 
 	beginPruneBatch := func(version int64) (err error) {
+		if orphanQuery == nil {
+			orphanQuery, err = w.sql.treeWrite.Prepare("SELECT version, sequence, at, ROWID FROM orphan WHERE at <= ? LIMIT ?")
+			if err != nil {
+				return fmt.Errorf("failed to prepare orphan query; %w", err)
+			}
+		}
+		if deleteBranch == nil {
+			deleteBranch, err = w.sql.treeWrite.Prepare(fmt.Sprintf("DELETE FROM tree_%d WHERE version = ? AND sequence = ? LIMIT 1", defaultShardID))
+			if err != nil {
+				return fmt.Errorf("failed to prepare delete branch; %w", err)
+			}
+		}
+		if deleteOrphan == nil {
+			deleteOrphan, err = w.sql.treeWrite.Prepare("DELETE FROM orphan WHERE ROWID = ?")
+			if err != nil {
+				return fmt.Errorf("failed to prepare orphan delete; %w", err)
+			}
+		}
+
 		if err = w.sql.treeWrite.Begin(); err != nil {
 			return err
 		}
@@ -337,6 +380,10 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 		return nil
 	}
 	commitPrune := func() (err error) {
+		if err = orphanQuery.Reset(); err != nil {
+			return err
+		}
+
 		if err = w.sql.treeWrite.Commit(); err != nil {
 			return err
 		}
@@ -344,10 +391,6 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 		w.logger.Debug(fmt.Sprintf("commit tree prune count=%s", humanize.Comma(pruneCount)))
 		if err = w.sql.treeWrite.Exec("PRAGMA wal_checkpoint(RESTART)"); err != nil {
 			return fmt.Errorf("failed to checkpoint; %w", err)
-		}
-
-		if err = orphanQuery.Reset(); err != nil {
-			return err
 		}
 
 		if err = deleteBranch.Reset(); err != nil {
