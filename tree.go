@@ -1161,8 +1161,8 @@ func (tree *Tree) WorkingHash() []byte {
 		return emptyHash
 	}
 
-	tree.rw.RLock()
-	defer tree.rw.RUnlock()
+	tree.rw.Lock()
+	defer tree.rw.Unlock()
 
 	if tree.root.hash != nil {
 		return tree.root.hash
