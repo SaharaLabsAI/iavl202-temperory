@@ -138,7 +138,7 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 
 	beginPruneBatch := func(pruneTo int64) error {
 		if orphanQuery == nil {
-			orphanQuery, err = w.sql.leafWrite.Prepare(`SELECT version, sequence, ROWID FROM leaf_orphan WHERE at <= ? LIMIT ?`)
+			orphanQuery, err = w.sql.leafWrite.Prepare(`SELECT version, sequence, ROWID FROM leaf_orphan WHERE at <= ?`)
 			if err != nil {
 				return fmt.Errorf("failed to prepare leaf orphan query; %w", err)
 			}
@@ -351,7 +351,7 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 
 	beginPruneBatch := func(version int64) (err error) {
 		if orphanQuery == nil {
-			orphanQuery, err = w.sql.treeWrite.Prepare("SELECT version, sequence, at, ROWID FROM orphan WHERE at <= ? LIMIT ?")
+			orphanQuery, err = w.sql.treeWrite.Prepare("SELECT version, sequence, at, ROWID FROM orphan WHERE at <= ?")
 			if err != nil {
 				return fmt.Errorf("failed to prepare orphan query; %w", err)
 			}
