@@ -12,8 +12,8 @@ const (
 	PostOrder
 )
 
-const maxStackSize = 10_000
-const maxOutChanSize = 12_000
+const maxStackSize = 8_000
+const maxOutChanSize = 10_000
 
 type Exporter struct {
 	tree    *Tree
