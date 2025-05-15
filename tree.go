@@ -120,9 +120,6 @@ func (tree *Tree) LoadVersion(version int64) (err error) {
 		return nil
 	}
 
-	tree.rw.Lock()
-	defer tree.rw.Unlock()
-
 	tree.version.Store(version)
 	if tree.immutable {
 		exists, err := tree.sql.HasRoot(version)
@@ -135,6 +132,9 @@ func (tree *Tree) LoadVersion(version int64) (err error) {
 
 		return nil
 	}
+
+	tree.rw.Lock()
+	defer tree.rw.Unlock()
 
 	tree.workingBytes = 0
 	tree.workingSize = 0
@@ -900,10 +900,16 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 }
 
 func (tree *Tree) Size() int64 {
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	return tree.root.size
 }
 
 func (tree *Tree) Height() int8 {
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	return tree.root.subtreeHeight
 }
 
@@ -1040,27 +1046,30 @@ func (tree *Tree) DeleteVersionsTo(toVersion int64) error {
 }
 
 func (tree *Tree) WorkingBytes() uint64 {
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	return tree.workingBytes
 }
 
 func (tree *Tree) GetWithIndex(key []byte) (int64, []byte, error) {
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	if tree.root == nil {
 		return 0, nil, nil
 	}
-
-	tree.rw.RLock()
-	defer tree.rw.RUnlock()
 
 	return tree.root.get(tree, key)
 }
 
 func (tree *Tree) GetByIndex(index int64) (key []byte, value []byte, err error) {
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	if tree.root == nil {
 		return nil, nil, nil
 	}
-
-	tree.rw.RLock()
-	defer tree.rw.RUnlock()
 
 	return tree.getByIndex(tree.root, index)
 }
@@ -1157,12 +1166,12 @@ func (tree *Tree) Import(version int64) (*Importer, error) {
 }
 
 func (tree *Tree) WorkingHash() []byte {
+	tree.rw.Lock()
+	defer tree.rw.Unlock()
+
 	if tree.root == nil {
 		return emptyHash
 	}
-
-	tree.rw.Lock()
-	defer tree.rw.Unlock()
 
 	if tree.root.hash != nil {
 		return tree.root.hash
@@ -1294,9 +1303,6 @@ func (tree *Tree) GetFromRoot(key []byte) ([]byte, error) {
 }
 
 func (tree *Tree) IteratorLeavesAt(version int64) (Iterator, error) {
-	tree.rw.Lock()
-	defer tree.rw.Unlock()
-
 	return tree.IteratorAt(version, nil, nil, true)
 }
 
