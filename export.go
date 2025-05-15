@@ -13,6 +13,7 @@ const (
 )
 
 const maxStackSize = 1000
+const maxOutChanSize = 10_000
 
 type Exporter struct {
 	tree  *Tree
@@ -23,7 +24,7 @@ type Exporter struct {
 func (tree *Tree) Export(order TraverseOrderType) *Exporter {
 	exporter := &Exporter{
 		tree:  tree,
-		out:   make(chan *Node),
+		out:   make(chan *Node, maxOutChanSize),
 		errCh: make(chan error),
 	}
 
@@ -89,14 +90,14 @@ func (e *Exporter) postOrderNext(root *Node) {
 			return
 		}
 
+		if right != nil {
+			stack = append(stack, right)
+		}
+
 		left, err := node.getLeftNode(e.tree)
 		if err != nil {
 			e.errCh <- err
 			return
-		}
-
-		if right != nil {
-			stack = append(stack, right)
 		}
 
 		if left != nil {
@@ -155,6 +156,14 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 	select {
 	case node, ok := <-e.out:
 		if !ok {
+			// Channel is closed, check for errors
+			select {
+			case err, ok := <-e.errCh:
+				if ok {
+					return nil, err
+				}
+			default:
+			}
 			return nil, ErrorExportDone
 		}
 		return &SnapshotNode{
@@ -165,6 +174,19 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 		}, nil
 	case err, ok := <-e.errCh:
 		if !ok {
+			// Error channel closed, check if out channel still has items
+			select {
+			case node, ok := <-e.out:
+				if ok {
+					return &SnapshotNode{
+						Key:     node.key,
+						Value:   node.value,
+						Version: node.nodeKey.Version(),
+						Height:  node.subtreeHeight,
+					}, nil
+				}
+			default:
+			}
 			return nil, ErrorExportDone
 		}
 		return nil, err
@@ -175,11 +197,27 @@ func (e *Exporter) NextRawNode() (*Node, error) {
 	select {
 	case node, ok := <-e.out:
 		if !ok {
+			// Channel is closed, check for errors
+			select {
+			case err, ok := <-e.errCh:
+				if ok {
+					return nil, err
+				}
+			default:
+			}
 			return nil, ErrorExportDone
 		}
 		return node, nil
 	case err, ok := <-e.errCh:
 		if !ok {
+			// Error channel closed, check if out channel still has items
+			select {
+			case node, ok := <-e.out:
+				if ok {
+					return node, nil
+				}
+			default:
+			}
 			return nil, ErrorExportDone
 		}
 		return nil, err
