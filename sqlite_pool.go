@@ -67,6 +67,7 @@ func (pool *SqliteReadonlyConnPool) GetConn() (*SqliteReadConn, error) {
 
 	conn := NewSqliteImmutableReadConn(pool.treeVersion.Load(), pool.opts, pool.logger)
 	conn.inUse = true
+	conn.ResetToTreeVersion(conn.treeVersion + 1) // Force reset on first connect
 	pool.conns = append(pool.conns, conn)
 
 	pool.logger.Debug(fmt.Sprintf("Created new connection, pool size now: %d", len(pool.conns)))
