@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -56,6 +57,8 @@ type Tree struct {
 	rootHashed bool
 	cache      map[string][]byte
 	deleted    map[string]bool
+
+	rw sync.RWMutex
 }
 
 type TreeOptions struct {
@@ -117,6 +120,9 @@ func (tree *Tree) LoadVersion(version int64) (err error) {
 		return nil
 	}
 
+	tree.rw.Lock()
+	defer tree.rw.Unlock()
+
 	tree.version.Store(version)
 	if tree.immutable {
 		exists, err := tree.sql.HasRoot(version)
@@ -145,6 +151,9 @@ func (tree *Tree) LoadVersion(version int64) (err error) {
 }
 
 func (tree *Tree) LoadSnapshot(version int64, traverseOrder TraverseOrderType) (err error) {
+	tree.rw.Lock()
+	defer tree.rw.Unlock()
+
 	var v int64
 	tree.root, v, err = tree.sql.ImportMostRecentSnapshot(version, traverseOrder, true)
 	if err != nil {
@@ -160,11 +169,17 @@ func (tree *Tree) LoadSnapshot(version int64, traverseOrder TraverseOrderType) (
 }
 
 func (tree *Tree) SaveSnapshot() (err error) {
+	tree.rw.Lock()
+	defer tree.rw.Unlock()
+
 	ctx := context.Background()
 	return tree.sql.Snapshot(ctx, tree)
 }
 
 func (tree *Tree) SaveVersion() ([]byte, int64, error) {
+	tree.rw.Lock()
+	defer tree.rw.Unlock()
+
 	tree.version.Add(1)
 	tree.resetSequences()
 
@@ -312,6 +327,9 @@ func (tree *Tree) Get(key []byte) ([]byte, error) {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_get")
 	}
 
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	treeVersion := tree.version.Load()
 
 	if tree.immutable {
@@ -344,6 +362,9 @@ func (tree *Tree) Has(key []byte) (bool, error) {
 	if tree.metricsProxy != nil {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_has")
 	}
+
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
 
 	treeVersion := tree.version.Load()
 
@@ -392,11 +413,14 @@ func (tree *Tree) Set(key, value []byte) (updated bool, err error) {
 		panic("set on immutable tree")
 	}
 
-	tree.rootHashed = false
-
 	if tree.metricsProxy != nil {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_set")
 	}
+
+	tree.rw.Lock()
+	defer tree.rw.Unlock()
+
+	tree.rootHashed = false
 
 	updated, err = tree.set(key, value)
 	if err != nil {
@@ -634,6 +658,9 @@ func (tree *Tree) Remove(key []byte) ([]byte, bool, error) {
 	if tree.metricsProxy != nil {
 		defer tree.metricsProxy.MeasureSince(time.Now(), metricsNamespace, "tree_remove")
 	}
+
+	tree.rw.Lock()
+	defer tree.rw.Unlock()
 
 	if tree.root == nil {
 		return nil, false, nil
@@ -989,6 +1016,9 @@ func (tree *Tree) Close() error {
 }
 
 func (tree *Tree) Hash() []byte {
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	if tree.root == nil {
 		return emptyHash
 	}
@@ -1017,6 +1047,10 @@ func (tree *Tree) GetWithIndex(key []byte) (int64, []byte, error) {
 	if tree.root == nil {
 		return 0, nil, nil
 	}
+
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	return tree.root.get(tree, key)
 }
 
@@ -1024,6 +1058,10 @@ func (tree *Tree) GetByIndex(index int64) (key []byte, value []byte, err error) 
 	if tree.root == nil {
 		return nil, nil, nil
 	}
+
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	return tree.getByIndex(tree.root, index)
 }
 
@@ -1073,6 +1111,9 @@ func (tree *Tree) GetRecent(version int64, key []byte) (bool, []byte, error) {
 		return true, nil, nil
 	}
 
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	_, val, err := root.get(tree, key)
 	return true, val, err
 }
@@ -1119,6 +1160,9 @@ func (tree *Tree) WorkingHash() []byte {
 	if tree.root == nil {
 		return emptyHash
 	}
+
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
 
 	if tree.root.hash != nil {
 		return tree.root.hash
@@ -1242,11 +1286,17 @@ func (tree *Tree) VersionExists(version int64) (bool, error) {
 }
 
 func (tree *Tree) GetFromRoot(key []byte) ([]byte, error) {
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	_, val, err := tree.root.get(tree, key)
 	return val, err
 }
 
 func (tree *Tree) IteratorLeavesAt(version int64) (Iterator, error) {
+	tree.rw.Lock()
+	defer tree.rw.Unlock()
+
 	return tree.IteratorAt(version, nil, nil, true)
 }
 
