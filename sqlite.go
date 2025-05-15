@@ -665,16 +665,11 @@ func (sql *SqliteDb) SaveRoot(version int64, node *Node) error {
 }
 
 func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
-	conn, err := gosqlite.Open(sql.opts.treeConnectionString(ReadOnly), openReadOnlyMode)
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(Immutable), openReadOnlyMode)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
-
-	err = conn.Exec("PRAGMA immutable=1;")
-	if err != nil {
-		return nil, err
-	}
 
 	rootQuery, err := conn.Prepare("SELECT node_version, node_sequence, bytes FROM root WHERE version = ? LIMIT 1", version)
 	if err != nil {
@@ -1077,16 +1072,11 @@ func (sql *SqliteDb) GetAt(version int64, key []byte) ([]byte, error) {
 }
 
 func (sql *SqliteDb) HasRoot(version int64) (bool, error) {
-	conn, err := gosqlite.Open(sql.opts.treeConnectionString(ReadOnly), openReadOnlyMode)
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(Immutable), openReadOnlyMode)
 	if err != nil {
 		return false, err
 	}
 	defer conn.Close()
-
-	err = conn.Exec("PRAGMA immutable=1;")
-	if err != nil {
-		return false, err
-	}
 
 	rootQuery, err := conn.Prepare("SELECT node_version FROM root WHERE version = ? LIMIT 1", version)
 	if err != nil {
