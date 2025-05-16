@@ -1147,6 +1147,14 @@ func (tree *Tree) DeleteVersionsTo(toVersion int64) error {
 	return nil
 }
 
+func (tree *Tree) DeleteVersionsToSync(toVersion int64) error {
+	tree.sqlWriter.awaitTreePruned = make(chan struct{})
+	tree.sqlWriter.treePruneCh <- &pruneSignal{pruneVersion: toVersion}
+	tree.sqlWriter.leafPruneCh <- &pruneSignal{pruneVersion: toVersion}
+	<-tree.sqlWriter.awaitTreePruned
+	return nil
+}
+
 func (tree *Tree) WorkingBytes() uint64 {
 	tree.rw.RLock()
 	defer tree.rw.RUnlock()

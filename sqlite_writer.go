@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const pruneBatchSize = 10
+const pruneBatchSize = 2000
 
 type pruneSignal struct {
 	pruneVersion int64
@@ -33,6 +33,8 @@ type saveResult struct {
 type sqlWriter struct {
 	sql    *SqliteDb
 	logger Logger
+
+	awaitTreePruned chan struct{}
 
 	treePruneCh chan *pruneSignal
 	treeCh      chan *saveSignal
@@ -76,6 +78,7 @@ func (w *sqlWriter) start(ctx context.Context) {
 
 		err := w.treeLoop(ctx)
 		if err != nil {
+			fmt.Printf("tree loop failed %s\n", err.Error())
 			w.logger.Error("tree loop failed", "error", err)
 			os.Exit(1)
 		}
@@ -88,6 +91,7 @@ func (w *sqlWriter) start(ctx context.Context) {
 
 		err := w.leafLoop(ctx)
 		if err != nil {
+			fmt.Printf("leaf loop failed %s\n", err.Error())
 			w.logger.Error("leaf loop failed", "error", err)
 			os.Exit(1)
 		}
@@ -161,7 +165,7 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 		if err = w.sql.leafWrite.Begin(); err != nil {
 			return fmt.Errorf("failed to begin leaf prune tx; %w", err)
 		}
-		if err = orphanQuery.Bind(pruneTo, pruneBatchSize); err != nil {
+		if err = orphanQuery.Bind(pruneTo); err != nil {
 			return err
 		}
 
@@ -373,7 +377,7 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 			return err
 		}
 
-		if err = orphanQuery.Bind(version, pruneBatchSize); err != nil {
+		if err = orphanQuery.Bind(version); err != nil {
 			return err
 		}
 
@@ -454,7 +458,7 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 				return err
 			}
 
-			if err = w.sql.treeWrite.Exec("DELETE FROM root WHERE version < ?", pruneVersion); err != nil {
+			if err = w.sql.treeWrite.Exec("DELETE FROM root WHERE version <= ?", pruneVersion); err != nil {
 				return err
 			}
 
@@ -469,6 +473,9 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 				}
 				nextPruneVersion = 0
 			} else {
+				if w.awaitTreePruned != nil {
+					close(w.awaitTreePruned)
+				}
 				pruneVersion = 0
 			}
 		}
