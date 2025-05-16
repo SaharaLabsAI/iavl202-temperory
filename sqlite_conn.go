@@ -23,7 +23,7 @@ type SqliteReadConn struct {
 	inUse  bool
 	logger Logger
 
-	mu sync.Mutex
+	mu sync.RWMutex
 }
 
 func NewSqliteReadConn(conn *gosqlite.Conn, opts *SqliteDbOptions, logger Logger) *SqliteReadConn {
@@ -332,6 +332,20 @@ func (c *SqliteReadConn) ResetShardQueries() error {
 	// }
 	//
 	// return nil
+}
+
+func (c *SqliteReadConn) IsInUse() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return c.inUse
+}
+
+func (c *SqliteReadConn) MarkInUse() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.inUse = true
 }
 
 func (c *SqliteReadConn) MarkIdle() {

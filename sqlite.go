@@ -766,7 +766,7 @@ func (sql *SqliteDb) WarmLeaves() error {
 		if err != nil {
 			return err
 		}
-		defer sql.readPool.ReleaseConn(conn)
+		defer conn.MarkIdle()
 
 		stmt, err = conn.conn.Prepare("SELECT version, sequence, key, bytes FROM changelog.leaf")
 	} else {
@@ -968,38 +968,23 @@ func (sql *SqliteDb) replayChangelog(tree *Tree, toVersion int64, targetHash []b
 
 	var q *gosqlite.Stmt
 	var conn *SqliteReadConn
-	var poolConn *SqliteReadConn
 	var err error
 
-	// Use the connection pool if available
-	if sql.readPool != nil {
-		poolConn, err = sql.readPool.GetConn()
-		if err != nil {
-			return err
-		}
-		defer sql.readPool.ReleaseConn(poolConn)
+	conn, err = sql.getReadConn()
+	if err != nil {
+		return err
+	}
+	defer conn.MarkIdle()
 
-		q, err = poolConn.conn.Prepare(`SELECT * FROM (
-			SELECT version, sequence, key, bytes
-		FROM changelog.leaf WHERE version > ? AND version <= ?
-		) as ops
-		ORDER BY version, sequence`)
-	} else {
-		conn, err = sql.getReadConn()
-		if err != nil {
-			return err
-		}
-
-		q, err = conn.Prepare(`SELECT * FROM (
+	q, err = conn.Prepare(`SELECT * FROM (
 			SELECT version, sequence, key, bytes
 		FROM leaf WHERE version > ? AND version <= ?
 		) as ops
 		ORDER BY version, sequence`)
-	}
-
 	if err != nil {
 		return err
 	}
+	defer q.Reset()
 
 	if err = q.Bind(tree.version.Load(), toVersion); err != nil {
 		return err

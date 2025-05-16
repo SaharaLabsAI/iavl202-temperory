@@ -189,6 +189,9 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 		return nil, 0, err
 	}
 
+	tree.sql.readPool.SetSavingTree()
+	defer tree.sql.readPool.UnsetSavingTree()
+
 	rootHash := tree.computeHash()
 
 	err := tree.sqlWriter.saveTree(tree)

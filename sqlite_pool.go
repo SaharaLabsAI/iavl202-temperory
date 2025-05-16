@@ -1,9 +1,11 @@
 package iavl
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/eatonphil/gosqlite"
 
@@ -14,14 +16,15 @@ type SqliteReadonlyConnPool struct {
 	opts *SqliteDbOptions
 
 	treeVersion *atomic.Int64
+	savingTree  atomic.Bool
 
-	mu    sync.Mutex
-	conns []*SqliteReadConn
-
+	conns *ConnPool
 	iters *IterPool
 
 	metrics metrics.Proxy
 	logger  Logger
+
+	mu sync.RWMutex
 }
 
 func NewSqliteReadonlyConnPool(opts *SqliteDbOptions, MaxPoolSize int) (*SqliteReadonlyConnPool, error) {
@@ -31,7 +34,7 @@ func NewSqliteReadonlyConnPool(opts *SqliteDbOptions, MaxPoolSize int) (*SqliteR
 
 	pool := &SqliteReadonlyConnPool{
 		opts:    opts,
-		conns:   make([]*SqliteReadConn, 0, MaxPoolSize),
+		conns:   NewConnPool(opts, MaxPoolSize, opts.Logger),
 		iters:   NewIterPool(opts.Logger),
 		metrics: opts.Metrics,
 		logger:  opts.Logger,
@@ -46,51 +49,54 @@ func (pool *SqliteReadonlyConnPool) LinkTreeVersion(version *atomic.Int64) {
 	pool.treeVersion = version
 }
 
-func (pool *SqliteReadonlyConnPool) GetConn() (*SqliteReadConn, error) {
+func (pool *SqliteReadonlyConnPool) SetSavingTree() {
+	pool.savingTree.Store(true)
 	pool.mu.Lock()
-	defer pool.mu.Unlock()
+}
 
-	for _, conn := range pool.conns {
-		if !conn.inUse {
-			conn.inUse = true
-			conn.ResetToTreeVersion(pool.treeVersion.Load())
-			return conn, nil
+func (pool *SqliteReadonlyConnPool) UnsetSavingTree() {
+	pool.savingTree.Store(false)
+	pool.mu.Unlock()
+}
+
+func (pool *SqliteReadonlyConnPool) GetConn() (*SqliteReadConn, error) {
+	pool.mu.RLock()
+
+	if pool.savingTree.Load() {
+		pool.mu.RUnlock()
+
+		ctx := context.Background()
+		for {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+				// Check if checkpoint finished
+				pool.mu.RLock()
+				if pool.savingTree.Load() {
+					pool.mu.RUnlock()
+					continue
+				}
+
+				// Checkpoint done, proceed with connection
+				defer pool.mu.RUnlock()
+				// Continue with existing GetConn logic
+				return pool.conns.getConn(pool.treeVersion.Load())
+			}
 		}
 	}
 
-	if len(pool.conns) > pool.opts.MaxPoolSize {
-		return nil, fmt.Errorf("service busy, try again later")
-	}
-
-	conn := NewSqliteImmutableReadConn(pool.treeVersion.Load(), pool.opts, pool.logger)
-	conn.inUse = true
-	conn.ResetToTreeVersion(conn.treeVersion + 1) // Force reset on first connect
-	pool.conns = append(pool.conns, conn)
-
-	pool.logger.Debug(fmt.Sprintf("Created new connection, pool size now: %d", len(pool.conns)))
-
-	return conn, nil
-}
-
-// ReleaseConn returns a connection to the pool
-func (pool *SqliteReadonlyConnPool) ReleaseConn(conn *SqliteReadConn) {
-	conn.MarkIdle()
+	defer pool.mu.RUnlock()
+	return pool.conns.getConn(pool.treeVersion.Load())
 }
 
 // Close closes all connections in the pool
 func (pool *SqliteReadonlyConnPool) Close() error {
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-
-	var lastErr error
-	for _, conn := range pool.conns {
-		lastErr = conn.conn.Close()
+	if err := pool.iters.closeHangingIterators(); err != nil {
+		return err
 	}
 
-	// Clear the pool
-	pool.conns = nil
-
-	return lastErr
+	return pool.conns.close()
 }
 
 func (pool *SqliteReadonlyConnPool) ResetShardQueries() {
@@ -252,6 +258,64 @@ func (pool *SqliteReadonlyConnPool) GetVersionDescLeafIterator(version int64, li
 	pool.iters.setIterator(idx, stmt, conn)
 
 	return stmt, idx, nil
+}
+
+type ConnPool struct {
+	opts *SqliteDbOptions
+
+	conns []*SqliteReadConn
+
+	logger Logger
+
+	mu sync.Mutex
+}
+
+func NewConnPool(opts *SqliteDbOptions, MaxPoolSize int, logger Logger) *ConnPool {
+	return &ConnPool{
+		opts:   opts,
+		conns:  make([]*SqliteReadConn, 0, MaxPoolSize),
+		logger: logger,
+	}
+}
+
+func (c *ConnPool) getConn(version int64) (*SqliteReadConn, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, conn := range c.conns {
+		if !conn.IsInUse() {
+			conn.inUse = true
+			conn.ResetToTreeVersion(version)
+			return conn, nil
+		}
+	}
+
+	if len(c.conns) > c.opts.MaxPoolSize {
+		return nil, fmt.Errorf("service busy, try again later")
+	}
+
+	conn := NewSqliteImmutableReadConn(version, c.opts, c.logger)
+	conn.inUse = true
+	conn.ResetToTreeVersion(conn.treeVersion + 1) // Force reset on first connect
+	c.conns = append(c.conns, conn)
+
+	c.logger.Debug(fmt.Sprintf("Created new connection, pool size now: %d", len(c.conns)))
+
+	return conn, nil
+}
+
+func (c *ConnPool) close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var lastErr error
+	for _, conn := range c.conns {
+		lastErr = conn.conn.Close()
+	}
+
+	c.conns = nil
+
+	return lastErr
 }
 
 type IterPool struct {
