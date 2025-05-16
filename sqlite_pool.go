@@ -18,9 +18,7 @@ type SqliteReadonlyConnPool struct {
 	mu    sync.Mutex
 	conns []*SqliteReadConn
 
-	kvItrIdx    int
-	kvIterators map[int]*gosqlite.Stmt
-	kvItrConns  map[int]*SqliteReadConn
+	iters *IterPool
 
 	metrics metrics.Proxy
 	logger  Logger
@@ -32,12 +30,11 @@ func NewSqliteReadonlyConnPool(opts *SqliteDbOptions, MaxPoolSize int) (*SqliteR
 	}
 
 	pool := &SqliteReadonlyConnPool{
-		opts:        opts,
-		conns:       make([]*SqliteReadConn, 0, MaxPoolSize),
-		kvIterators: make(map[int]*gosqlite.Stmt),
-		kvItrConns:  make(map[int]*SqliteReadConn),
-		metrics:     opts.Metrics,
-		logger:      opts.Logger,
+		opts:    opts,
+		conns:   make([]*SqliteReadConn, 0, MaxPoolSize),
+		iters:   NewIterPool(opts.Logger),
+		metrics: opts.Metrics,
+		logger:  opts.Logger,
 	}
 
 	pool.logger.Info(fmt.Sprintf("Created readonly connection pool with max size %d", MaxPoolSize))
@@ -108,46 +105,11 @@ func (pool *SqliteReadonlyConnPool) ResetShardQueries() {
 }
 
 func (pool *SqliteReadonlyConnPool) CloseKVIterstor(idx int) error {
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-
-	var err error
-	stmt, exists := pool.kvIterators[idx]
-	if exists {
-		err = stmt.Close()
-		delete(pool.kvIterators, idx)
-	}
-
-	conn, exists := pool.kvItrConns[idx]
-	if exists {
-		pool.ReleaseConn(conn)
-		delete(pool.kvItrConns, idx)
-	}
-
-	return err
+	return pool.iters.closeKVIterstor(idx)
 }
 
 func (pool *SqliteReadonlyConnPool) CloseHangingIterators() error {
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-
-	for idx, stmt := range pool.kvIterators {
-		pool.logger.Warn(fmt.Sprintf("closing hanging iterator idx=%d", idx))
-		if err := stmt.Close(); err != nil {
-			return err
-		}
-
-		if pool.kvItrConns[idx] != nil {
-			pool.ReleaseConn(pool.kvItrConns[idx])
-			delete(pool.kvItrConns, idx)
-		}
-
-		delete(pool.kvIterators, idx)
-	}
-
-	pool.kvItrIdx = 0
-
-	return nil
+	return pool.iters.closeHangingIterators()
 }
 
 func (pool *SqliteReadonlyConnPool) GetKVIteratorQuery(version int64, start, end []byte, ascending, inclusive bool) (stmt *gosqlite.Stmt, idx int, err error) {
@@ -163,16 +125,12 @@ func (pool *SqliteReadonlyConnPool) GetKVIteratorQuery(version int64, start, end
 		suffix = "DESC"
 	}
 
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-
-	pool.kvItrIdx++
-	idx = pool.kvItrIdx
-
 	endKey := "key < ?"
 	if inclusive {
 		endKey = "key <= ?"
 	}
+
+	idx = pool.iters.nextIdx()
 
 	switch {
 	case start == nil && end == nil:
@@ -245,8 +203,7 @@ ORDER BY l.key %s;`, endKey, suffix))
 		}
 	}
 
-	pool.kvIterators[idx] = stmt
-	pool.kvItrConns[idx] = conn
+	pool.iters.setIterator(idx, stmt, conn)
 
 	return stmt, idx, nil
 }
@@ -271,11 +228,7 @@ func (pool *SqliteReadonlyConnPool) GetVersionDescLeafIterator(version int64, li
 		return nil, 0, err
 	}
 
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-
-	pool.kvItrIdx++
-	idx = pool.kvItrIdx
+	idx = pool.iters.nextIdx()
 
 	stmt, err = conn.Prepare(`
 		SELECT l.key, l.bytes, l.version
@@ -296,8 +249,86 @@ func (pool *SqliteReadonlyConnPool) GetVersionDescLeafIterator(version int64, li
 		return nil, idx, err
 	}
 
-	pool.kvIterators[idx] = stmt
-	pool.kvItrConns[idx] = conn
+	pool.iters.setIterator(idx, stmt, conn)
 
 	return stmt, idx, nil
+}
+
+type IterPool struct {
+	kvItrIdx    int
+	kvIterators map[int]*gosqlite.Stmt
+	kvItrConns  map[int]*SqliteReadConn
+
+	logger Logger
+
+	mu sync.Mutex
+}
+
+func NewIterPool(logger Logger) *IterPool {
+	return &IterPool{
+		kvIterators: make(map[int]*gosqlite.Stmt),
+		kvItrConns:  make(map[int]*SqliteReadConn),
+		logger:      logger,
+	}
+}
+
+func (i *IterPool) nextIdx() int {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	i.kvItrIdx++
+
+	return i.kvItrIdx
+}
+
+func (i *IterPool) setIterator(idx int, stmt *gosqlite.Stmt, conn *SqliteReadConn) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	i.kvIterators[idx] = stmt
+	i.kvItrConns[idx] = conn
+}
+
+func (i *IterPool) closeKVIterstor(idx int) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	var err error
+	stmt, exists := i.kvIterators[idx]
+	if exists {
+		err = stmt.Close()
+		delete(i.kvIterators, idx)
+	}
+
+	conn, exists := i.kvItrConns[idx]
+	if exists {
+		conn.MarkIdle()
+		delete(i.kvItrConns, idx)
+	}
+
+	return err
+}
+
+func (i *IterPool) closeHangingIterators() error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	for idx, stmt := range i.kvIterators {
+		i.logger.Info(fmt.Sprintf("closing hanging iterator idx=%d", idx))
+
+		if err := stmt.Close(); err != nil {
+			return err
+		}
+
+		if i.kvItrConns[idx] != nil {
+			i.kvItrConns[idx].MarkIdle()
+			delete(i.kvItrConns, idx)
+		}
+
+		delete(i.kvIterators, idx)
+	}
+
+	i.kvItrIdx = 0
+
+	return nil
 }

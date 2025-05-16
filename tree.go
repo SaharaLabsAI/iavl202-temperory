@@ -185,9 +185,9 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 
 	treeVersion := tree.version.Load()
 
-	// if err := tree.sql.closeHangingIterators(); err != nil {
-	// 	return nil, 0, err
-	// }
+	if err := tree.sql.closeHangingIterators(); err != nil {
+		return nil, 0, err
+	}
 
 	rootHash := tree.computeHash()
 
