@@ -144,6 +144,7 @@ func (tree *Tree) LoadVersion(version int64) (err error) {
 		return err
 	}
 
+	tree.rootHashed = true
 	tree.cache = make(map[string][]byte)
 	tree.deleted = make(map[string]bool)
 
@@ -163,6 +164,7 @@ func (tree *Tree) LoadSnapshot(version int64, traverseOrder TraverseOrderType) (
 		return fmt.Errorf("requested %d found snapshot %d, replay not yet supported", version, v)
 	}
 	tree.version.Store(v)
+	tree.rootHashed = true
 	tree.cache = make(map[string][]byte)
 	tree.deleted = make(map[string]bool)
 	return nil
@@ -702,6 +704,9 @@ func (tree *Tree) Remove(key []byte) ([]byte, bool, error) {
 	if tree.root == nil {
 		return nil, false, nil
 	}
+
+	tree.rootHashed = false
+
 	newRoot, _, value, removed, err := tree.recursiveRemove(tree.root, key)
 	if err != nil {
 		return nil, false, err
