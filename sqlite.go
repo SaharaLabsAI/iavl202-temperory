@@ -91,6 +91,11 @@ type SqliteDb struct {
 	logger  Logger
 
 	useReadPool bool
+
+	leafInsert *gosqlite.Stmt
+	leafOrphan *gosqlite.Stmt
+	treeInsert *gosqlite.Stmt
+	treeOrphan *gosqlite.Stmt
 }
 
 func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
@@ -243,6 +248,10 @@ func NewSqliteDb(pool *NodePool, opts SqliteDbOptions) (*SqliteDb, error) {
 	}
 
 	if err = sql.init(); err != nil {
+		return nil, err
+	}
+
+	if err = sql.prepareInsertStatements(); err != nil {
 		return nil, err
 	}
 
@@ -444,6 +453,51 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	return err
 }
 
+func (sql *SqliteDb) prepareInsertStatements() (err error) {
+	if sql.leafInsert != nil {
+		if err = sql.leafInsert.Close(); err != nil {
+			return err
+		}
+	}
+	sql.leafInsert, err = sql.leafWrite.Prepare("INSERT OR REPLACE INTO leaf (version, sequence, key, bytes) VALUES (?, ?, ?, ?)")
+	if err != nil {
+		return err
+	}
+
+	if sql.leafOrphan != nil {
+		if err = sql.leafOrphan.Close(); err != nil {
+			return err
+		}
+	}
+	sql.leafOrphan, err = sql.leafWrite.Prepare("INSERT INTO leaf_orphan (version, sequence, at) VALUES (?, ?, ?)")
+	if err != nil {
+		return err
+	}
+
+	if sql.treeOrphan != nil {
+		if err = sql.treeOrphan.Close(); err != nil {
+			return err
+		}
+	}
+	sql.treeOrphan, err = sql.treeWrite.Prepare("INSERT INTO orphan (version, sequence, at) VALUES (?, ?, ?)")
+	if err != nil {
+		return err
+	}
+
+	if sql.treeInsert != nil {
+		if err = sql.treeInsert.Close(); err != nil {
+			return err
+		}
+	}
+	sql.treeInsert, err = sql.treeWrite.Prepare(fmt.Sprintf(
+		"INSERT INTO tree_%d (version, sequence, bytes) VALUES (?, ?, ?)", defaultShardID))
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
 func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 	var (
 		conn *gosqlite.Conn
@@ -583,6 +637,30 @@ func (sql *SqliteDb) getNode(nodeKey NodeKey) (*Node, error) {
 }
 
 func (sql *SqliteDb) Close() error {
+	if sql.leafInsert != nil {
+		if err := sql.leafInsert.Close(); err != nil {
+			sql.logger.Warn("failed to close leaf insert statement", "err", err)
+		}
+	}
+
+	if sql.leafOrphan != nil {
+		if err := sql.leafOrphan.Close(); err != nil {
+			sql.logger.Warn("failed to close leaf orphan statement", "err", err)
+		}
+	}
+
+	if sql.treeInsert != nil {
+		if err := sql.treeInsert.Close(); err != nil {
+			sql.logger.Warn("failed to close tree insert statement", "err", err)
+		}
+	}
+
+	if sql.treeOrphan != nil {
+		if err := sql.treeOrphan.Close(); err != nil {
+			sql.logger.Warn("failed to close tree orphan statement", "err", err)
+		}
+	}
+
 	if err := sql.closeHangingIterators(); err != nil {
 		return err
 	}

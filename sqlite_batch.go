@@ -32,15 +32,6 @@ type sqliteBatch struct {
 }
 
 func (b *sqliteBatch) newChangeLogBatch() (err error) {
-	b.leafInsert, err = b.sql.leafWrite.Prepare("INSERT OR REPLACE INTO leaf (version, sequence, key, bytes) VALUES (?, ?, ?, ?)")
-	if err != nil {
-		return err
-	}
-	b.leafOrphan, err = b.sql.leafWrite.Prepare("INSERT INTO leaf_orphan (version, sequence, at) VALUES (?, ?, ?)")
-	if err != nil {
-		return err
-	}
-
 	if err = b.sql.leafWrite.Begin(); err != nil {
 		return err
 	}
@@ -67,16 +58,6 @@ func (b *sqliteBatch) execBranchOrphan(nodeKey NodeKey) error {
 }
 
 func (b *sqliteBatch) newTreeBatch(shardID int64) (err error) {
-	b.treeInsert, err = b.sql.treeWrite.Prepare(fmt.Sprintf(
-		"INSERT INTO tree_%d (version, sequence, bytes) VALUES (?, ?, ?)", shardID))
-	if err != nil {
-		return err
-	}
-	b.treeOrphan, err = b.sql.treeWrite.Prepare("INSERT INTO orphan (version, sequence, at) VALUES (?, ?, ?)")
-	if err != nil {
-		return err
-	}
-
 	if err = b.sql.treeWrite.Begin(); err != nil {
 		return err
 	}
@@ -104,7 +85,7 @@ func (b *sqliteBatch) treeBatchCommit() error {
 	return nil
 }
 
-func (b *sqliteBatch) treeMaybeCommit(shardID int64) (err error) {
+func (b *sqliteBatch) treeMaybeCommit(_shardID int64) (err error) {
 	if b.treeCount%b.size == 0 {
 		if err = b.treeBatchCommit(); err != nil {
 			return err
@@ -114,7 +95,10 @@ func (b *sqliteBatch) treeMaybeCommit(shardID int64) (err error) {
 }
 
 func (b *sqliteBatch) saveLeaves() (int64, error) {
+	b.leafInsert = b.sql.leafInsert
+	b.leafOrphan = b.sql.leafOrphan
 	b.leafCount = 0
+
 	tree := b.tree
 
 	buf := bufPool.Get().(*bytes.Buffer)
@@ -129,8 +113,12 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 	}
 
 	defer func() {
-		b.leafInsert.Close()
-		b.leafOrphan.Close()
+		if err := b.leafInsert.Reset(); err != nil {
+			b.logger.Warn("failed to reset leaf insert", "err", err)
+		}
+		if err := b.leafOrphan.Reset(); err != nil {
+			b.logger.Warn("failed to reset leaf orphan", "err", err)
+		}
 	}()
 
 	for i, leaf := range tree.leaves {
@@ -208,8 +196,11 @@ func (b *sqliteBatch) saveLeaves() (int64, error) {
 }
 
 func (b *sqliteBatch) saveBranches() (n int64, err error) {
-	tree := b.tree
+	b.treeInsert = b.sql.treeInsert
+	b.treeOrphan = b.sql.treeOrphan
 	b.treeCount = 0
+
+	tree := b.tree
 
 	shardID, err := tree.sql.nextShard(tree.version.Load())
 	if err != nil {
@@ -229,8 +220,12 @@ func (b *sqliteBatch) saveBranches() (n int64, err error) {
 	}
 
 	defer func() {
-		b.treeInsert.Close()
-		b.treeOrphan.Close()
+		if err := b.treeInsert.Reset(); err != nil {
+			b.logger.Warn("failed to reset tree insert", "err", err)
+		}
+		if err := b.treeOrphan.Reset(); err != nil {
+			b.logger.Warn("failed to reset tree orphan", "err", err)
+		}
 	}()
 
 	for _, node := range tree.branches {
