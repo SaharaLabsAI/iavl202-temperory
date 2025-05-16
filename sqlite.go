@@ -527,7 +527,12 @@ func (sql *SqliteDb) resetReadConn() (err error) {
 		return err
 	}
 
-	err = sql.read.conn.Exec("PRAGMA query_only=RESET; PRAGMA query_only=ON;")
+	err = sql.read.conn.Exec("PRAGMA query_only=OFF;")
+	if err != nil {
+		return err
+	}
+
+	err = sql.read.conn.Exec("PRAGMA query_only=ON;")
 	if err != nil {
 		return err
 	}
