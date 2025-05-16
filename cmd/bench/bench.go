@@ -63,7 +63,7 @@ $ go run ./cmd snapshot --db /tmp/iavl2 --version 1
 			treeOpts := iavl.DefaultTreeOptions()
 			treeOpts.StateStorage = true
 			treeOpts.HeightFilter = 1
-			treeOpts.EvictionDepth = 22
+			treeOpts.EvictionDepth = 32
 			treeOpts.MetricsProxy = metrics.NewStructMetrics()
 			if usePrometheus {
 				treeOpts.MetricsProxy = newPrometheusMetricsProxy()

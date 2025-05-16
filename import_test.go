@@ -20,7 +20,7 @@ func Test_ExportImport(t *testing.T) {
 	opts := testutil.BigTreeOptions_100_000()
 	opts.Until = 20
 	opts.UntilHash = "0d4dfc4b6f6194f72da11fa254cf2910e54d330e8a4d6238af40e6b8d35ea77f"
-	treeOpts := TreeOptions{HeightFilter: 1, StateStorage: true, EvictionDepth: 8}
+	treeOpts := TreeOptions{HeightFilter: 1, StateStorage: true, EvictionDepth: 20}
 
 	multiTree := NewMultiTree(NewDebugLogger(), tmpDir, treeOpts)
 	itrs, ok := opts.Iterator.(*bench.ChangesetIterators)
