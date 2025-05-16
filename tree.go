@@ -990,26 +990,32 @@ func (tree *Tree) resetSequences() {
 }
 
 func (tree *Tree) mutateNode(node *Node) {
-	// this second conditional is only relevant in replay; or more specifically, in cases where hashing has been
-	// deferred between versions
-	if node.hash == nil && node.nodeKey.Version() == tree.version.Load()+1 {
-		return
-	}
+	// Check if the node has already been mutated for the next version
+	alreadyMutatedForNextVersion := node.hash == nil && node.nodeKey.Version() == tree.version.Load()+1
+
+	// Even if node appears to be mutated for next version, we always need to:
+	// 1. Set the hash to nil to force recalculation
+	// 2. Mark the node as dirty to ensure tracking
+
+	// Always reset the hash (no early return)
 	node.hash = nil
-	if node.isLeaf() {
-		node.nodeKey = tree.nextLeafNodeKey()
-	} else {
-		node.nodeKey = tree.nextNodeKey()
+
+	// Only update the node key if it's not already for the next version
+	if !alreadyMutatedForNextVersion {
+		if node.isLeaf() {
+			node.nodeKey = tree.nextLeafNodeKey()
+		} else {
+			node.nodeKey = tree.nextNodeKey()
+		}
 	}
 
-	if node.dirty {
-		return
-	}
-
-	node.dirty = true
-	tree.workingSize++
-	if !node.isLeaf() {
-		tree.workingBytes += node.sizeBytes()
+	// Only update dirty flag and working stats if not already dirty
+	if !node.dirty {
+		node.dirty = true
+		tree.workingSize++
+		if !node.isLeaf() {
+			tree.workingBytes += node.sizeBytes()
+		}
 	}
 }
 
