@@ -391,11 +391,17 @@ func (node *Node) writeHashToBuffer(buf *bytes.Buffer) {
 		buf.Write(valueHash[:])
 	} else {
 		leftHash := node.leftNode.hash
+		if leftHash == nil {
+			panic("unexpected nil left hash")
+		}
 		n = binary.PutUvarint(tmp[:], uint64(len(leftHash)))
 		buf.Write(tmp[:n])
 		buf.Write(leftHash)
 
 		rightHash := node.rightNode.hash
+		if rightHash == nil {
+			panic("unexpect nil right hash")
+		}
 		n = binary.PutUvarint(tmp[:], uint64(len(rightHash)))
 		buf.Write(tmp[:n])
 		buf.Write(rightHash)
