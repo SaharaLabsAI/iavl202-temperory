@@ -255,6 +255,8 @@ func (b *sqliteBatch) saveBranches() (n int64, err error) {
 			return 0, err
 		}
 
+		node.dirty = false
+
 		if node.evict {
 			tree.returnNode(node)
 		}
