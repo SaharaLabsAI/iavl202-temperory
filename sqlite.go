@@ -359,6 +359,10 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	if err != nil {
 		return err
 	}
+	err = sql.treeWrite.Exec("PRAGMA lock_mode=EXCLUSIVE;")
+	if err != nil {
+		return err
+	}
 	err = sql.treeWrite.Exec("PRAGMA automatic_index=OFF;")
 	if err != nil {
 		return err
@@ -400,6 +404,10 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	if err != nil {
 		return err
 	}
+	err = sql.leafWrite.Exec("PRAGMA lock_mode=EXCLUSIVE;")
+	if err != nil {
+		return err
+	}
 	err = sql.leafWrite.Exec("PRAGMA automatic_index=OFF;")
 	if err != nil {
 		return err
@@ -408,7 +416,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	if err != nil {
 		return err
 	}
-	err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA analysis_limit=%d;", defaultAnalysisLimit))
+	err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA analysis_limit=%d;", defaultAnalysisLimit))
 	if err != nil {
 		return err
 	}
