@@ -53,10 +53,10 @@ type Tree struct {
 	isReplaying    bool
 	evictionDepth  int8
 
-	immutable  bool
-	rootHashed bool
-	cache      map[string][]byte
-	deleted    map[string]bool
+	immutable     bool
+	hashedVersion int64
+	cache         map[string][]byte
+	deleted       map[string]bool
 
 	rw sync.RWMutex
 }
@@ -96,7 +96,7 @@ func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 		evictionDepth:   opts.EvictionDepth,
 		leafSequence:    leafSequenceStart,
 		immutable:       false,
-		rootHashed:      false,
+		hashedVersion:   0,
 		cache:           make(map[string][]byte),
 		deleted:         make(map[string]bool),
 	}
@@ -144,7 +144,7 @@ func (tree *Tree) LoadVersion(version int64) (err error) {
 		return err
 	}
 
-	tree.rootHashed = true
+	tree.hashedVersion = version
 	tree.cache = make(map[string][]byte)
 	tree.deleted = make(map[string]bool)
 
@@ -164,7 +164,7 @@ func (tree *Tree) LoadSnapshot(version int64, traverseOrder TraverseOrderType) (
 		return fmt.Errorf("requested %d found snapshot %d, replay not yet supported", version, v)
 	}
 	tree.version.Store(v)
-	tree.rootHashed = true
+	tree.hashedVersion = v
 	tree.cache = make(map[string][]byte)
 	tree.deleted = make(map[string]bool)
 	return nil
@@ -229,11 +229,11 @@ func (tree *Tree) computeHash() []byte {
 	if tree.root == nil {
 		return sha256.New().Sum(nil)
 	}
-	if tree.rootHashed && tree.root.hash != nil {
+	if tree.hashedVersion == tree.version.Load() && tree.root.hash != nil {
 		return tree.root.hash
 	}
 	tree.deepHash(tree.root, 0)
-	tree.rootHashed = true
+	tree.hashedVersion = tree.version.Load()
 	return tree.root.hash
 }
 
@@ -458,8 +458,6 @@ func (tree *Tree) Set(key, value []byte) (updated bool, err error) {
 
 	tree.rw.Lock()
 	defer tree.rw.Unlock()
-
-	tree.rootHashed = false
 
 	updated, err = tree.set(key, value)
 	if err != nil {
@@ -704,8 +702,6 @@ func (tree *Tree) Remove(key []byte) ([]byte, bool, error) {
 	if tree.root == nil {
 		return nil, false, nil
 	}
-
-	tree.rootHashed = false
 
 	newRoot, _, value, removed, err := tree.recursiveRemove(tree.root, key)
 	if err != nil {
@@ -1294,7 +1290,7 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 		metricsProxy:    tree.metricsProxy,
 		evictionDepth:   tree.evictionDepth,
 		leafSequence:    leafSequenceStart,
-		rootHashed:      true,
+		hashedVersion:   version,
 		cache:           make(map[string][]byte),
 		deleted:         make(map[string]bool),
 	}
@@ -1329,7 +1325,7 @@ func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
 		metricsProxy:    tree.metricsProxy,
 		evictionDepth:   tree.evictionDepth,
 		leafSequence:    leafSequenceStart,
-		rootHashed:      true,
+		hashedVersion:   version,
 		cache:           make(map[string][]byte),
 		deleted:         make(map[string]bool),
 	}
