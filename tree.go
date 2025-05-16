@@ -246,16 +246,18 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 
 	// Estimate stack capacity based on tree height to avoid reallocations
 	// 2^height is roughly the maximum number of nodes
-	estimatedCapacity := 1 << (node.subtreeHeight + 1)
-	if estimatedCapacity > 1024 {
-		estimatedCapacity = 1024 // Cap to avoid excessive allocation for very large trees
-	}
+	estimatedCapacity := min(1<<(node.subtreeHeight+1), 1024)
 	stack := make([]nodeWithDepth, 0, estimatedCapacity)
 	stack = append(stack, nodeWithDepth{node: node, depth: depth, visited: false})
 
 	// Pre-allocate slices for append operations to avoid reallocations
 	tree.branches = make([]*Node, 0, estimatedCapacity/2)
 	tree.leaves = make([]*Node, 0, estimatedCapacity/2)
+
+	// Track nodes that should be evicted but not returned to pool yet
+	nodesToEvict := make(map[*Node]bool)
+	// Track nodes that should be returned to pool after hash calculation
+	nodesToReturn := make(map[*Node]bool)
 
 	// Process nodes in a depth-first manner using a stack
 	for len(stack) > 0 {
@@ -329,14 +331,14 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 
 			if leftNode != nil && leftNode.isLeaf() {
 				if !leftNode.dirty {
-					tree.returnNode(leftNode)
+					nodesToReturn[leftNode] = true
 				}
 				current.node.leftNode = nil
 			}
 
 			if rightNode != nil && rightNode.isLeaf() {
 				if !rightNode.dirty {
-					tree.returnNode(rightNode)
+					nodesToReturn[rightNode] = true
 				}
 				current.node.rightNode = nil
 			}
@@ -344,8 +346,16 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 
 		// Apply eviction if at or beyond the eviction depth
 		if current.depth >= tree.evictionDepth {
-			current.node.evictChildren()
+			nodesToEvict[current.node] = true
 		}
+	}
+
+	for node := range nodesToEvict {
+		node.evictChildren()
+	}
+
+	for node := range nodesToReturn {
+		tree.returnNode(node)
 	}
 }
 

@@ -3,6 +3,7 @@ package iavl
 import (
 	"math"
 	"sync"
+	"sync/atomic"
 )
 
 type NodePool struct {
@@ -11,13 +12,13 @@ type NodePool struct {
 	free  chan int
 	nodes []Node
 
-	poolId uint64
+	poolId atomic.Uint64
 }
 
 func NewNodePool() *NodePool {
 	np := &NodePool{
 		syncPool: &sync.Pool{
-			New: func() interface{} {
+			New: func() any {
 				return &Node{}
 			},
 		},
@@ -27,13 +28,13 @@ func NewNodePool() *NodePool {
 }
 
 func (np *NodePool) Get() *Node {
-	if np.poolId == math.MaxUint64 {
-		np.poolId = 1
+	if np.poolId.Load() == math.MaxUint64 {
+		np.poolId.Store(1)
 	} else {
-		np.poolId++
+		np.poolId.Add(1)
 	}
 	n := np.syncPool.Get().(*Node)
-	n.poolId = np.poolId
+	n.poolId = np.poolId.Load()
 	return n
 }
 
@@ -46,7 +47,7 @@ func (np *NodePool) Put(node *Node) {
 	node.hash = nil
 	node.key = nil
 	node.value = nil
-	node.subtreeHeight = 0
+	node.subtreeHeight = -1
 	node.size = 0
 	node.dirty = false
 	node.evict = false
