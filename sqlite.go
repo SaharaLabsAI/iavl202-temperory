@@ -36,16 +36,11 @@ const (
 )
 
 var (
-	Force8KPageSize        = "0"
-	isForce8KPageSize      = false
 	DisableS2Compression   = "0"
 	isDisableS2Compression = false
 )
 
 func init() {
-	if Force8KPageSize == "1" {
-		isForce8KPageSize = true
-	}
 	if DisableS2Compression == "1" {
 		isDisableS2Compression = true
 	}
@@ -123,9 +118,6 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	}
 
 	pageSize := max(os.Getpagesize(), defaultPageSize)
-	if isForce8KPageSize {
-		pageSize = PageSize8K
-	}
 	opts.walPages = opts.WalSize / pageSize
 
 	opts.ShardTrees = false
@@ -294,9 +286,6 @@ CREATE TABLE root (
 		}
 
 		pageSize := max(os.Getpagesize(), defaultPageSize)
-		if isForce8KPageSize {
-			pageSize = PageSize8K
-		}
 		sql.logger.Info(fmt.Sprintf("setting page size to %s", humanize.Bytes(uint64(pageSize))))
 		err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA page_size=%d; VACUUM;", pageSize))
 		if err != nil {
@@ -336,9 +325,6 @@ CREATE INDEX leaf_orphan_idx ON leaf_orphan (at DESC);`)
 		}
 
 		pageSize := max(os.Getpagesize(), defaultPageSize)
-		if isForce8KPageSize {
-			pageSize = PageSize8K
-		}
 		sql.logger.Info(fmt.Sprintf("setting page size to %s", humanize.Bytes(uint64(pageSize))))
 		err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA page_size=%d; VACUUM;", pageSize))
 		if err != nil {
