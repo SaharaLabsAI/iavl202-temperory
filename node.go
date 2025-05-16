@@ -189,21 +189,15 @@ func (tree *Tree) balance(node *Node) (newSelf *Node, err error) {
 
 	// Left heavy subtree
 	if balance > 1 {
-		// Calculate left child balance directly to avoid another node fetch
+		// Only fetch left child's nodes if we need to determine rotation type
 		leftLeftNode, err := leftNode.getLeftNode(tree)
 		if err != nil {
 			return nil, err
 		}
 
-		leftRightNode, err := leftNode.getRightNode(tree)
-		if err != nil {
-			return nil, err
-		}
-
-		leftBalance := int(leftLeftNode.subtreeHeight) - int(leftRightNode.subtreeHeight)
-
-		if leftBalance >= 0 {
-			// Left-Left case: single right rotation
+		// Check if we need a double rotation by looking at left-left height
+		if leftLeftNode.subtreeHeight >= leftNode.subtreeHeight-1 {
+			// Left-Left case: single right rotation (leftLeftNode height is sufficient)
 			return tree.rotateRight(node)
 		} else {
 			// Left-Right case: left rotation on left child, then right rotation on node
@@ -216,21 +210,15 @@ func (tree *Tree) balance(node *Node) (newSelf *Node, err error) {
 			return tree.rotateRight(node)
 		}
 	} else { // balance < -1, right heavy subtree
-		// Calculate right child balance directly to avoid another node fetch
-		rightLeftNode, err := rightNode.getLeftNode(tree)
-		if err != nil {
-			return nil, err
-		}
-
+		// Only fetch right child's nodes if we need to determine rotation type
 		rightRightNode, err := rightNode.getRightNode(tree)
 		if err != nil {
 			return nil, err
 		}
 
-		rightBalance := int(rightLeftNode.subtreeHeight) - int(rightRightNode.subtreeHeight)
-
-		if rightBalance <= 0 {
-			// Right-Right case: single left rotation
+		// Check if we need a double rotation by looking at right-right height
+		if rightRightNode.subtreeHeight >= rightNode.subtreeHeight-1 {
+			// Right-Right case: single left rotation (rightRightNode height is sufficient)
 			return tree.rotateLeft(node)
 		} else {
 			// Right-Left case: right rotation on right child, then left rotation on node
