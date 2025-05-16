@@ -341,12 +341,6 @@ var (
 		},
 	}
 	emptyHash = sha256.New().Sum(nil)
-	// Pre-allocate a buffer for encoding byte values
-	bufferPool = &sync.Pool{
-		New: func() any {
-			return make([]byte, 0, 1024)
-		},
-	}
 )
 
 // Computes the hash of the node without computing its descendants. Must be
@@ -359,57 +353,53 @@ func (node *Node) _hash() []byte {
 	h := hashPool.Get().(hash.Hash)
 	h.Reset() // Ensure the hash is clean
 
-	// Get a buffer from the pool to reduce allocations
-	buf := bufferPool.Get().([]byte)
-	buf = buf[:0] // Reset buffer length while keeping capacity
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
 
-	// Write to buffer first, then hash in one go to reduce hash.Write calls
-	buf = node.appendHashBytes(buf)
-	h.Write(buf)
+	node.writeHashToBuffer(buf)
+	h.Write(buf.Bytes())
 
-	// Reuse the same buffer for the result to avoid allocation
 	node.hash = h.Sum(nil)
 
-	// Return the buffer to the pool
-	bufferPool.Put(buf)
+	bufPool.Put(buf)
 	hashPool.Put(h)
 
 	return node.hash
 }
 
-// appendHashBytes builds the byte representation for hashing directly into the provided buffer
-func (node *Node) appendHashBytes(buf []byte) []byte {
-	// Append height
-	buf = binary.AppendVarint(buf, int64(node.subtreeHeight))
-	// Append size
-	buf = binary.AppendVarint(buf, node.size)
-	// Append version
-	buf = binary.AppendVarint(buf, node.nodeKey.Version())
+func (node *Node) writeHashToBuffer(buf *bytes.Buffer) {
+	var tmp [binary.MaxVarintLen64]byte
+	n := binary.PutVarint(tmp[:], int64(node.subtreeHeight))
+	buf.Write(tmp[:n])
+
+	n = binary.PutVarint(tmp[:], node.size)
+	buf.Write(tmp[:n])
+
+	n = binary.PutVarint(tmp[:], node.nodeKey.Version())
+	buf.Write(tmp[:n])
 
 	if node.isLeaf() {
-		// Append key length and key
-		buf = binary.AppendUvarint(buf, uint64(len(node.key)))
-		buf = append(buf, node.key...)
+		n = binary.PutUvarint(tmp[:], uint64(len(node.key)))
+		buf.Write(tmp[:n])
+		buf.Write(node.key)
 
 		// Compute value hash directly
 		valueHash := sha256.Sum256(node.value)
 
-		// Append value hash length and hash
-		buf = binary.AppendUvarint(buf, uint64(len(valueHash)))
-		buf = append(buf, valueHash[:]...)
+		n = binary.PutUvarint(tmp[:], uint64(len(valueHash)))
+		buf.Write(tmp[:n])
+		buf.Write(valueHash[:])
 	} else {
-		// Append left hash length and hash
 		leftHash := node.leftNode.hash
-		buf = binary.AppendUvarint(buf, uint64(len(leftHash)))
-		buf = append(buf, leftHash...)
+		n = binary.PutUvarint(tmp[:], uint64(len(leftHash)))
+		buf.Write(tmp[:n])
+		buf.Write(leftHash)
 
-		// Append right hash length and hash
 		rightHash := node.rightNode.hash
-		buf = binary.AppendUvarint(buf, uint64(len(rightHash)))
-		buf = append(buf, rightHash...)
+		n = binary.PutUvarint(tmp[:], uint64(len(rightHash)))
+		buf.Write(tmp[:n])
+		buf.Write(rightHash)
 	}
-
-	return buf
 }
 
 // writeHashBytes is kept for backward compatibility
