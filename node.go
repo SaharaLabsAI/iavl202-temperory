@@ -341,6 +341,12 @@ var (
 		},
 	}
 	emptyHash = sha256.New().Sum(nil)
+	// Pre-allocate a buffer for encoding byte values
+	bufferPool = &sync.Pool{
+		New: func() any {
+			return make([]byte, 0, 1024)
+		},
+	}
 )
 
 // Computes the hash of the node without computing its descendants. Must be
@@ -351,16 +357,62 @@ func (node *Node) _hash() []byte {
 	}
 
 	h := hashPool.Get().(hash.Hash)
-	if err := node.writeHashBytes(h); err != nil {
-		return nil
-	}
+	h.Reset() // Ensure the hash is clean
+
+	// Get a buffer from the pool to reduce allocations
+	buf := bufferPool.Get().([]byte)
+	buf = buf[:0] // Reset buffer length while keeping capacity
+
+	// Write to buffer first, then hash in one go to reduce hash.Write calls
+	buf = node.appendHashBytes(buf)
+	h.Write(buf)
+
+	// Reuse the same buffer for the result to avoid allocation
 	node.hash = h.Sum(nil)
-	h.Reset()
+
+	// Return the buffer to the pool
+	bufferPool.Put(buf)
 	hashPool.Put(h)
 
 	return node.hash
 }
 
+// appendHashBytes builds the byte representation for hashing directly into the provided buffer
+func (node *Node) appendHashBytes(buf []byte) []byte {
+	// Append height
+	buf = binary.AppendVarint(buf, int64(node.subtreeHeight))
+	// Append size
+	buf = binary.AppendVarint(buf, node.size)
+	// Append version
+	buf = binary.AppendVarint(buf, node.nodeKey.Version())
+
+	if node.isLeaf() {
+		// Append key length and key
+		buf = binary.AppendUvarint(buf, uint64(len(node.key)))
+		buf = append(buf, node.key...)
+
+		// Compute value hash directly
+		valueHash := sha256.Sum256(node.value)
+
+		// Append value hash length and hash
+		buf = binary.AppendUvarint(buf, uint64(len(valueHash)))
+		buf = append(buf, valueHash[:]...)
+	} else {
+		// Append left hash length and hash
+		leftHash := node.leftNode.hash
+		buf = binary.AppendUvarint(buf, uint64(len(leftHash)))
+		buf = append(buf, leftHash...)
+
+		// Append right hash length and hash
+		rightHash := node.rightNode.hash
+		buf = binary.AppendUvarint(buf, uint64(len(rightHash)))
+		buf = append(buf, rightHash...)
+	}
+
+	return buf
+}
+
+// writeHashBytes is kept for backward compatibility
 func (node *Node) writeHashBytes(w io.Writer) error {
 	var (
 		n   int

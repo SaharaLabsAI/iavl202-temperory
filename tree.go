@@ -241,24 +241,32 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 
 	treeVersion := tree.version.Load()
 
-	// Stack to replace recursion
-	stack := make([]nodeWithDepth, 0)
+	// Estimate stack capacity based on tree height to avoid reallocations
+	// 2^height is roughly the maximum number of nodes
+	estimatedCapacity := 1 << (node.subtreeHeight + 1)
+	if estimatedCapacity > 1024 {
+		estimatedCapacity = 1024 // Cap to avoid excessive allocation for very large trees
+	}
+	stack := make([]nodeWithDepth, 0, estimatedCapacity)
 	stack = append(stack, nodeWithDepth{node: node, depth: depth, visited: false})
+
+	// Pre-allocate slices for append operations to avoid reallocations
+	tree.branches = make([]*Node, 0, estimatedCapacity/2)
+	tree.leaves = make([]*Node, 0, estimatedCapacity/2)
 
 	// Process nodes in a depth-first manner using a stack
 	for len(stack) > 0 {
-		// Peek at the top node from stack
-		current := stack[len(stack)-1]
+		// Pop from stack instead of peeking - reduces slice operations
+		lastIdx := len(stack) - 1
+		current := stack[lastIdx]
+		stack = stack[:lastIdx]
 
 		if current.node == nil {
 			panic(fmt.Sprintf("node is nil; sql.path=%s", tree.sql.opts.Path))
 		}
 
-		// Handle leaf nodes
+		// Check if this is a leaf node
 		if current.node.isLeaf() {
-			// Pop the leaf node
-			stack = stack[:len(stack)-1]
-
 			// new leaves are written every version
 			if current.node.nodeKey.Version() == treeVersion {
 				tree.leaves = append(tree.leaves, current.node)
@@ -268,48 +276,64 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 
 		// Skip non-dirty or non-current version branch nodes
 		if !current.node.dirty || current.node.nodeKey.Version() != treeVersion {
-			// Pop the node as we're skipping it
-			stack = stack[:len(stack)-1]
 			continue
 		}
 
-		// Clear cached hash if not already done
+		// If it's the first visit, process children
 		if !current.visited {
+			// Clear cached hash
 			current.node.hash = nil
 
-			// Mark as visited and update in the stack
+			// Push back the current node with visited flag set
 			current.visited = true
-			stack[len(stack)-1] = current
+			stack = append(stack, current)
+
+			// Fetch both children at once to reduce function calls
+			leftNode := current.node.leftNode
+			rightNode := current.node.rightNode
+
+			// Only fetch from storage if needed
+			var err error
+			if leftNode == nil {
+				leftNode, err = current.node.getLeftNode(tree)
+				if err != nil {
+					panic(err) // Consistent with existing error handling
+				}
+			}
+
+			if rightNode == nil {
+				rightNode, err = current.node.getRightNode(tree)
+				if err != nil {
+					panic(err) // Consistent with existing error handling
+				}
+			}
 
 			// Push children to process first (post-order traversal)
 			// Add right then left, so left is processed first due to LIFO stack
-			rightNode := current.node.right(tree)
-			leftNode := current.node.left(tree)
-
 			stack = append(stack, nodeWithDepth{node: rightNode, depth: current.depth + 1, visited: false})
 			stack = append(stack, nodeWithDepth{node: leftNode, depth: current.depth + 1, visited: false})
 			continue
 		}
 
-		// Node is being processed after its children have been visited
-		// Pop the node
-		stack = stack[:len(stack)-1]
-
-		// Process the node
+		// Process the node after its children have been visited
 		tree.branches = append(tree.branches, current.node)
 		current.node._hash()
 
-		// Apply height filter if enabled
+		// Apply height filter if enabled - combined conditional checks
 		if tree.heightFilter > 0 {
-			if current.node.leftNode != nil && current.node.leftNode.isLeaf() {
-				if !current.node.leftNode.dirty {
-					tree.returnNode(current.node.leftNode)
+			leftNode := current.node.leftNode
+			rightNode := current.node.rightNode
+
+			if leftNode != nil && leftNode.isLeaf() {
+				if !leftNode.dirty {
+					tree.returnNode(leftNode)
 				}
 				current.node.leftNode = nil
 			}
-			if current.node.rightNode != nil && current.node.rightNode.isLeaf() {
-				if !current.node.rightNode.dirty {
-					tree.returnNode(current.node.rightNode)
+
+			if rightNode != nil && rightNode.isLeaf() {
+				if !rightNode.dirty {
+					tree.returnNode(rightNode)
 				}
 				current.node.rightNode = nil
 			}
