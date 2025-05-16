@@ -752,6 +752,9 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 	}
 	resultMap := make(map[*Node]resultInfo)
 
+	// Track nodes that should be returned to the pool after the operation
+	nodesToReturn := make(map[*Node]bool)
+
 	// Process frames until the stack is empty
 	for len(stack) > 0 {
 		// Get current frame from the top of stack
@@ -770,7 +773,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 			if bytes.Equal(currentFrame.key, currentNode.key) {
 				// Found the node to remove
 				tree.addDelete(currentNode)
-				tree.returnNode(currentNode)
+				nodesToReturn[currentNode] = true
 
 				result = resultInfo{
 					node:       nil,
@@ -794,6 +797,10 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 				resultMap[parentFrame.node] = result
 			} else {
 				// We're at the root
+				// Return nodes to pool now that we're done
+				for n := range nodesToReturn {
+					tree.returnNode(n)
+				}
 				return result.node, result.newKey, result.value, result.wasRemoved, nil
 			}
 			continue
@@ -840,6 +847,10 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 					resultMap[parentFrame.node] = childResult
 				} else {
 					// We're at the root
+					// Return nodes to pool now that we're done
+					for n := range nodesToReturn {
+						tree.returnNode(n)
+					}
 					return childResult.node, childResult.newKey, childResult.value, childResult.wasRemoved, nil
 				}
 				continue
@@ -858,7 +869,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 					// Collapse `node.rightNode` into `node`
 					rightNode := currentNode.right(tree)
 					resultKey = currentNode.key // Important: pass the current node's key up
-					tree.returnNode(currentNode)
+					nodesToReturn[currentNode] = true
 					resultNode = rightNode
 				} else {
 					// Left subtree changed but node wasn't removed
@@ -886,7 +897,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 					// Right node held value, was removed
 					// Collapse `node.leftNode` into `node`
 					leftNode := currentNode.left(tree)
-					tree.returnNode(currentNode)
+					nodesToReturn[currentNode] = true
 					resultNode = leftNode
 					// No new key when right node is removed and replaced with left node
 				} else {
@@ -927,12 +938,20 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 				resultMap[parentFrame.node] = result
 			} else {
 				// We're at the root
+				// Return nodes to pool now that we're done
+				for n := range nodesToReturn {
+					tree.returnNode(n)
+				}
 				return result.node, result.newKey, result.value, result.wasRemoved, nil
 			}
 		}
 	}
 
 	// We should never reach here
+	// If we somehow do, make sure to clean up
+	for n := range nodesToReturn {
+		tree.returnNode(n)
+	}
 	return nil, nil, nil, false, fmt.Errorf("unexpected exit from recursiveRemove")
 }
 
