@@ -210,7 +210,7 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 	saveLeaves := func(sig *saveSignal) {
 		res := &saveResult{}
 		res.n, res.err = sig.batch.saveLeaves()
-		if err = w.sql.leafWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		if err = w.sql.leafWrite.Exec("PRAGMA wal_checkpoint(RESTART)"); err != nil {
 			w.logger.Error("failed leaf wal_checkpoint", "error", err)
 		}
 		w.leafResult <- res
@@ -324,7 +324,7 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 				res.err = fmt.Errorf("failed to save root path=%s version=%d: %w", w.sql.opts.Path, sig.version, err)
 			}
 		}
-		if err := w.sql.treeWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		if err := w.sql.treeWrite.Exec("PRAGMA wal_checkpoint(RESTART)"); err != nil {
 			res.err = fmt.Errorf("failed tree checkpoint; %w", err)
 		}
 		w.treeResult <- res

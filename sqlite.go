@@ -380,7 +380,8 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	if err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", sql.opts.walPages)); err != nil {
+	// We manually call wal_checkpoint(RESTART) in saveBranches
+	if err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", 0)); err != nil {
 		return err
 	}
 
@@ -420,7 +421,8 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	if err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", sql.opts.walPages)); err != nil {
+	// We manually call wal_checkpoint(RESTART) in saveLeaves
+	if err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", 0)); err != nil {
 		return err
 	}
 
@@ -479,13 +481,12 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", sql.opts.BusyTimeout*10))
+	if err != nil {
+		return nil, err
+	}
 
 	// Below configuration may cause issues
-	// busyTimeout := sql.opts.BusyTimeout * 3
-	// err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", busyTimeout))
-	// if err != nil {
-	// 	return nil, err
-	// }
 	// err = conn.Exec(fmt.Sprintf("PRAGMA threads=%d;", sql.opts.ThreadsCount))
 	// if err != nil {
 	// 	return nil, err
