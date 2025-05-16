@@ -460,6 +460,7 @@ func EncodeBytes(w io.Writer, bz []byte) error {
 func MakeNode(pool *NodePool, nodeKey NodeKey, buf []byte) (*Node, error) {
 	if !isDisableS2Compression {
 		decBuf := bufPool.Get().(*bytes.Buffer)
+		decBuf.Reset()
 		defer bufPool.Put(decBuf)
 
 		var err error
@@ -636,6 +637,7 @@ func NewImportNode(key, value []byte, version int64, height int8) *Node {
 func extractValue(buf []byte) ([]byte, error) {
 	if !isDisableS2Compression {
 		decBuf := bufPool.Get().(*bytes.Buffer)
+		decBuf.Reset()
 		defer bufPool.Put(decBuf)
 
 		var err error

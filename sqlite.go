@@ -645,9 +645,9 @@ func (sql *SqliteDb) nextShard(_ int64) (int64, error) {
 func (sql *SqliteDb) SaveRoot(version int64, node *Node) error {
 	if node != nil {
 		buf := bufPool.Get().(*bytes.Buffer)
+		buf.Reset()
 		defer bufPool.Put(buf)
 
-		buf.Reset()
 		err := node.BytesWithBuffer(buf)
 		if err != nil {
 			return err
@@ -656,9 +656,9 @@ func (sql *SqliteDb) SaveRoot(version int64, node *Node) error {
 		bz := buf.Bytes()
 		if !isDisableS2Compression {
 			compressBuf := bufPool.Get().(*bytes.Buffer)
+			compressBuf.Reset()
 			defer bufPool.Put(compressBuf)
 
-			compressBuf.Reset()
 			bz = s2.Encode(compressBuf.Bytes(), buf.Bytes())
 		}
 

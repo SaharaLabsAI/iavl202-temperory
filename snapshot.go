@@ -168,9 +168,11 @@ func IngestSnapshot(conn *gosqlite.Conn, prefix string, version int64, nextFn fu
 		ordinal++
 
 		buf := bufPool.Get().(*bytes.Buffer)
+		buf.Reset()
 		defer bufPool.Put(buf)
 
 		compressBuf := bufPool.Get().(*bytes.Buffer)
+		compressBuf.Reset()
 		defer bufPool.Put(compressBuf)
 
 		node := &Node{
@@ -462,12 +464,13 @@ func (snap *sqliteSnapshot) writeStep(node *Node) error {
 	// Pre-order, NLR traversal
 	// Visit this node
 	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
 	defer bufPool.Put(buf)
 
 	compressBuf := bufPool.Get().(*bytes.Buffer)
+	compressBuf.Reset()
 	defer bufPool.Put(compressBuf)
 
-	buf.Reset()
 	err := node.BytesWithBuffer(buf)
 	if err != nil {
 		return err
@@ -475,7 +478,6 @@ func (snap *sqliteSnapshot) writeStep(node *Node) error {
 
 	nodeBz := buf.Bytes()
 	if !isDisableS2Compression {
-		compressBuf.Reset()
 		nodeBz = s2.Encode(compressBuf.Bytes(), buf.Bytes())
 	}
 
@@ -732,12 +734,13 @@ func (snap *sqliteSnapshot) restorePreOrderStep(nextFn func() (*SnapshotNode, er
 
 func (snap *sqliteSnapshot) writeSnapNode(node *Node, version int64, ordinal, sequence, count int) error {
 	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
 	defer bufPool.Put(buf)
 
 	compressBuf := bufPool.Get().(*bytes.Buffer)
+	compressBuf.Reset()
 	defer bufPool.Put(compressBuf)
 
-	buf.Reset()
 	err := node.BytesWithBuffer(buf)
 	if err != nil {
 		return err
@@ -745,7 +748,6 @@ func (snap *sqliteSnapshot) writeSnapNode(node *Node, version int64, ordinal, se
 
 	nodeBz := buf.Bytes()
 	if !isDisableS2Compression {
-		compressBuf.Reset()
 		nodeBz = s2.Encode(compressBuf.Bytes(), buf.Bytes())
 	}
 	if err = snap.snapshotInsert.Exec(ordinal, version, sequence, nodeBz); err != nil {
