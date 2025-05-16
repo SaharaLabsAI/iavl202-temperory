@@ -473,14 +473,6 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	pageSize := max(os.Getpagesize(), defaultPageSize)
-	if isForce8KPageSize {
-		pageSize = PageSize8K
-	}
-	err = conn.Exec(fmt.Sprintf("PRAGMA page_size=%d;", pageSize))
-	if err != nil {
-		return nil, err
-	}
 	err = conn.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", sql.opts.MmapSize))
 	if err != nil {
 		return nil, err
