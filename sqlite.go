@@ -103,10 +103,9 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	if opts.Mode == 0 {
 		opts.Mode = gosqlite.OPEN_READWRITE | gosqlite.OPEN_CREATE | gosqlite.OPEN_NOMUTEX
 	}
-	// Disable mmap size completely
 	if opts.MmapSize == 0 {
-		// 256M
-		// opts.MmapSize = 256 * 1024 * 1024
+		// 512M
+		opts.MmapSize = 512 * 1024 * 1024
 	}
 	if opts.WalSize == 0 {
 		opts.WalSize = 1024 * 1024 * 100
