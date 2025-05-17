@@ -53,10 +53,11 @@ type Tree struct {
 	isReplaying    bool
 	evictionDepth  int8
 
-	immutable     bool
-	hashedVersion int64
-	cache         map[string][]byte
-	deleted       map[string]bool
+	immutable         bool
+	hashedVersion     int64
+	modificationCount int64
+	cache             map[string][]byte
+	deleted           map[string]bool
 
 	rw sync.RWMutex
 }
@@ -204,6 +205,7 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.branchOrphans = nil
 	tree.deleted = make(map[string]bool)
 	tree.cache = make(map[string][]byte)
+	tree.modificationCount = 0
 
 	if err := tree.sql.resetReadConn(); err != nil {
 		return nil, treeVersion, err
@@ -232,11 +234,15 @@ func (tree *Tree) computeHash() []byte {
 
 	currentVersion := tree.version.Load()
 	if tree.hashedVersion == currentVersion && tree.root.hash != nil {
+		if tree.modificationCount != 0 {
+			panic("unexpected tree modification, hash root twice")
+		}
 		return tree.root.hash
 	}
 
 	tree.deepHash(tree.root, 0)
 	tree.hashedVersion = currentVersion
+	tree.modificationCount = 0
 	return tree.root.hash
 }
 
@@ -472,6 +478,7 @@ func (tree *Tree) Set(key, value []byte) (updated bool, err error) {
 		tree.metrics.IncrCounter(1, metricsNamespace, "tree_new_node")
 	}
 
+	tree.modificationCount++
 	tree.cache[string(key)] = value
 	delete(tree.deleted, string(key))
 
@@ -716,6 +723,7 @@ func (tree *Tree) Remove(key []byte) ([]byte, bool, error) {
 
 	delete(tree.cache, string(key))
 	tree.deleted[string(key)] = true
+	tree.modificationCount++
 
 	tree.metrics.IncrCounter(1, metricsNamespace, "tree_delete")
 
