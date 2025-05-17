@@ -93,7 +93,7 @@ func NewIngestSnapshotConnection(snapshotDbPath string) (*gosqlite.Conn, error) 
 			return nil, err
 		}
 
-		err = conn.Exec("PRAGMA journal_mode=WAL;")
+		err = conn.Exec(fmt.Sprintf("PRAGMA journal_mode=%s;", defaultJournalMode))
 		if err != nil {
 			return nil, err
 		}

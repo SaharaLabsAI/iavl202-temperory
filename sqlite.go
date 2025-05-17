@@ -23,7 +23,9 @@ const defaultMaxPoolSize = 1000
 const defaultPageSize = 4096 * 8 // 32K
 const defaultThreadsCount = 8
 const defaultAnalysisLimit = 2000
-const PageSize8K = 8192
+
+// journal mode is database wide, only need to set once on write connections
+const defaultJournalMode = "MEMORY"
 
 const openReadOnlyMode = gosqlite.OPEN_READONLY | gosqlite.OPEN_NOMUTEX
 
@@ -291,7 +293,7 @@ CREATE TABLE root (
 		if err != nil {
 			return err
 		}
-		err = sql.treeWrite.Exec("PRAGMA journal_mode=WAL;")
+		err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA journal_mode=%s;", defaultJournalMode))
 		if err != nil {
 			return err
 		}
@@ -330,7 +332,7 @@ CREATE INDEX leaf_orphan_idx ON leaf_orphan (at DESC);`)
 		if err != nil {
 			return err
 		}
-		err = sql.leafWrite.Exec("PRAGMA journal_mode=WAL;")
+		err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA journal_mode=%s;", defaultJournalMode))
 		if err != nil {
 			return err
 		}
@@ -367,7 +369,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	if err != nil {
 		return err
 	}
-	err = sql.treeWrite.Exec("PRAGMA journal_mode=WAL;")
+	err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA journal_mode=%s;", defaultJournalMode))
 	if err != nil {
 		return err
 	}
@@ -412,7 +414,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	if err != nil {
 		return err
 	}
-	err = sql.leafWrite.Exec("PRAGMA journal_mode=WAL;")
+	err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA journal_mode=%s;", defaultJournalMode))
 	if err != nil {
 		return err
 	}
@@ -454,10 +456,6 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 	}
 
 	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS changelog;", sql.opts.leafConnectionString(ReadOnly)))
-	if err != nil {
-		return nil, err
-	}
-	err = conn.Exec("PRAGMA journal_mode=WAL;")
 	if err != nil {
 		return nil, err
 	}

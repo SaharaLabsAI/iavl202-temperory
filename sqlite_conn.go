@@ -73,12 +73,6 @@ func (c *SqliteReadConn) ResetToTreeVersion(version int64) error {
 		return err
 	}
 
-	err = conn.Exec("PRAGMA journal_mode=OFF;")
-	if err != nil {
-		conn.Close()
-		return err
-	}
-
 	err = conn.Exec("PRAGMA synchronous=OFF;")
 	if err != nil {
 		conn.Close()
