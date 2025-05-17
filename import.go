@@ -266,9 +266,9 @@ func (i *Importer) Commit() error {
 		return err
 	}
 
-	if err := i.tree.sql.treeWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-		return fmt.Errorf("failed tree checkpoint; %w", err)
-	}
+	// if err := i.tree.sql.treeWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+	// 	return fmt.Errorf("failed tree checkpoint; %w", err)
+	// }
 	err = i.tree.LoadVersion(i.version)
 	if err != nil {
 		return err
