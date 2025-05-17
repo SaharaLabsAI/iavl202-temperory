@@ -298,9 +298,7 @@ func (tree *Tree) rotateRight(node *Node) (*Node, error) {
 	}
 
 	// Mark hash as dirty since tree structure changed
-	if tree.hashedVersion == tree.version.Load() {
-		tree.hashedVersion = -1
-	}
+	tree.markHashDirty()
 
 	return leftNode, nil
 }
@@ -356,9 +354,7 @@ func (tree *Tree) rotateLeft(node *Node) (*Node, error) {
 	}
 
 	// Mark hash as dirty since tree structure changed
-	if tree.hashedVersion == tree.version.Load() {
-		tree.hashedVersion = -1
-	}
+	tree.markHashDirty()
 
 	return rightNode, nil
 }
