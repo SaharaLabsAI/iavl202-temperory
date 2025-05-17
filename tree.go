@@ -1141,6 +1141,10 @@ func (tree *Tree) replayChangelog(toVersion int64, targetHash []byte) error {
 	return tree.sql.replayChangelog(tree, toVersion, targetHash)
 }
 
+func (tree *Tree) PausePruning(pause bool) {
+	tree.sqlWriter.pausePruning.Store(pause)
+}
+
 func (tree *Tree) DeleteVersionsTo(toVersion int64) error {
 	tree.sqlWriter.treePruneCh <- &pruneSignal{pruneVersion: toVersion}
 	tree.sqlWriter.leafPruneCh <- &pruneSignal{pruneVersion: toVersion}

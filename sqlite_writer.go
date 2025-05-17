@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -35,6 +36,7 @@ type sqlWriter struct {
 	logger Logger
 
 	awaitTreePruned chan struct{}
+	pausePruning    atomic.Bool
 
 	treePruneCh chan *pruneSignal
 	treeCh      chan *saveSignal
@@ -63,6 +65,8 @@ func (sql *SqliteDb) newSQLWriter() *sqlWriter {
 	if sql != nil {
 		writer.logger = sql.logger
 	}
+	writer.pausePruning.Store(false)
+
 	return writer
 }
 
@@ -207,6 +211,16 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 		return nil
 	}
 	stepPruning := func() error {
+		if w.pausePruning.Load() {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				runtime.Gosched()
+				return nil
+			}
+		}
+
 		hasRow, err := orphanQuery.Step()
 		if err != nil {
 			return fmt.Errorf("failed to step leaf orphan query; %w", err)
@@ -419,6 +433,16 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 		return nil
 	}
 	stepPruning := func() error {
+		if w.pausePruning.Load() {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				runtime.Gosched()
+				return nil
+			}
+		}
+
 		hasRow, err := orphanQuery.Step()
 		if err != nil {
 			return fmt.Errorf("failed to step orphan query; %w", err)
