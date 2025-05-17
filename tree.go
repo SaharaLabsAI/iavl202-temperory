@@ -952,6 +952,8 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 				// We're at the root
 				// Return nodes to pool now that we're done
 				for n := range nodesToReturn {
+					n.leftNode = nil
+					n.rightNode = nil
 					tree.returnNode(n)
 				}
 				return result.node, result.newKey, result.value, result.wasRemoved, nil
@@ -1087,20 +1089,27 @@ func (tree *Tree) returnNode(node *Node) {
 		return
 	}
 
+	// Check for lingering references before returning to pool
+	if node.leftNode != nil || node.rightNode != nil {
+		panic("Attempted to return node with active child references")
+	}
+
 	if node.dirty {
 		tree.workingBytes -= node.sizeBytes()
 		tree.workingSize--
 	}
 
-	// Clear all non-essential fields to prevent carrying stale data
+	// Clear ALL fields to prevent carrying stale data
 	node.hash = nil
+	node.key = nil
+	node.value = nil
 	node.dirty = false
 	node.evict = false
-
-	// Clear references that could cause memory leaks
-	// This is important to prevent retaining references to other nodes
-	node.leftNode = nil
-	node.rightNode = nil
+	node.nodeKey = emptyNodeKey
+	node.leftNodeKey = emptyNodeKey
+	node.rightNodeKey = emptyNodeKey
+	node.size = 0
+	node.subtreeHeight = -1
 
 	// Return node to the pool for reuse
 	tree.pool.Put(node)
