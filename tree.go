@@ -1213,6 +1213,9 @@ func (tree *Tree) SetInitialVersion(version int64) error {
 }
 
 func (tree *Tree) GetRecent(version int64, key []byte) (bool, []byte, error) {
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	got, root := tree.getRecentRoot(version)
 	if !got {
 		return false, nil, nil
@@ -1221,14 +1224,14 @@ func (tree *Tree) GetRecent(version int64, key []byte) (bool, []byte, error) {
 		return true, nil, nil
 	}
 
-	tree.rw.RLock()
-	defer tree.rw.RUnlock()
-
 	_, val, err := root.get(tree, key)
 	return true, val, err
 }
 
 func (tree *Tree) getRecentRoot(version int64) (bool, *Node) {
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	if version != tree.version.Load() {
 		return false, nil
 	}
@@ -1244,6 +1247,9 @@ func (tree *Tree) getRecentRoot(version int64) (bool, *Node) {
 }
 
 func (tree *Tree) IterateRecent(version int64, start, end []byte, ascending bool) (bool, Iterator) {
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
 	got, root := tree.getRecentRoot(version)
 	if !got {
 		return false, nil
