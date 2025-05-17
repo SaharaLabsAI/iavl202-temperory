@@ -57,6 +57,13 @@ func (tree *Tree) getProof(key []byte) (proof *ics23.CommitmentProof, err error)
 func (tree *Tree) getExistenceProof(key []byte) (proof *ics23.ExistenceProof, err error) {
 	tree.Hash()
 	path, node, err := tree.PathToLeaf(tree.root, key)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, fmt.Errorf("key node not found, may be pruned")
+	}
+
 	return &ics23.ExistenceProof{
 		Key:   node.key,
 		Value: node.value,
