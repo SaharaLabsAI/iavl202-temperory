@@ -229,11 +229,14 @@ func (tree *Tree) computeHash() []byte {
 	if tree.root == nil {
 		return sha256.New().Sum(nil)
 	}
-	if tree.hashedVersion == tree.version.Load() && tree.root.hash != nil {
+
+	currentVersion := tree.version.Load()
+	if tree.hashedVersion == currentVersion && tree.root.hash != nil {
 		return tree.root.hash
 	}
+
 	tree.deepHash(tree.root, 0)
-	tree.hashedVersion = tree.version.Load()
+	tree.hashedVersion = currentVersion
 	return tree.root.hash
 }
 
@@ -991,33 +994,30 @@ func (tree *Tree) resetSequences() {
 }
 
 func (tree *Tree) mutateNode(node *Node) {
-	// Check if the node has already been mutated for the next version
+	// this seems to be true only in certain cases
+	// we should investigate if we can remove this check
 	alreadyMutatedForNextVersion := node.hash == nil && node.nodeKey.Version() == tree.version.Load()+1
+	if alreadyMutatedForNextVersion {
+		// This node has already been mutated for the next version, so we can skip
+		// This can happen when we have already processed this node during a recursive operation
+		return
+	}
 
-	// Even if node appears to be mutated for next version, we always need to:
-	// 1. Set the hash to nil to force recalculation
-	// 2. Mark the node as dirty to ensure tracking
-
-	// Always reset the hash (no early return)
+	// Always mark the hash as nil to ensure recomputation
 	node.hash = nil
 
-	// Only update the node key if it's not already for the next version
-	if !alreadyMutatedForNextVersion {
-		if node.isLeaf() {
-			node.nodeKey = tree.nextLeafNodeKey()
-		} else {
-			node.nodeKey = tree.nextNodeKey()
-		}
+	// Create a new nodeKey with the next version
+	if node.isLeaf() {
+		node.nodeKey = tree.nextLeafNodeKey()
+	} else {
+		node.nodeKey = tree.nextNodeKey()
 	}
 
-	// Only update dirty flag and working stats if not already dirty
-	if !node.dirty {
-		node.dirty = true
-		tree.workingSize++
-		if !node.isLeaf() {
-			tree.workingBytes += node.sizeBytes()
-		}
-	}
+	// Mark the node as dirty for tracking
+	node.dirty = true
+
+	// Mark the tree hash as dirty
+	tree.markHashDirty()
 }
 
 func (tree *Tree) addOrphan(node *Node) {
@@ -1070,10 +1070,31 @@ func (tree *Tree) NewLeafNode(key []byte, value []byte) *Node {
 }
 
 func (tree *Tree) returnNode(node *Node) {
+	if node == nil {
+		return
+	}
+
+	// Make sure node is not the tree's root before recycling
+	if node == tree.root {
+		return
+	}
+
 	if node.dirty {
 		tree.workingBytes -= node.sizeBytes()
 		tree.workingSize--
 	}
+
+	// Clear all non-essential fields to prevent carrying stale data
+	node.hash = nil
+	node.dirty = false
+	node.evict = false
+
+	// Clear references that could cause memory leaks
+	// This is important to prevent retaining references to other nodes
+	node.leftNode = nil
+	node.rightNode = nil
+
+	// Return node to the pool for reuse
 	tree.pool.Put(node)
 }
 
@@ -1375,4 +1396,10 @@ func (tree *Tree) Path() string {
 
 func (tree *Tree) Revert(version int64) error {
 	return tree.sql.Revert(version)
+}
+
+// markHashDirty marks the tree's hash as needing recalculation
+// Call this function whenever the tree structure changes
+func (tree *Tree) markHashDirty() {
+	tree.hashedVersion = -1 // Invalidate hash by setting to impossible version
 }

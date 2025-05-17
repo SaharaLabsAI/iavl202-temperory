@@ -250,53 +250,117 @@ func (node *Node) calcBalance(t *Tree) (int, error) {
 // Rotate right and return the new node and orphan.
 func (tree *Tree) rotateRight(node *Node) (*Node, error) {
 	var err error
+
+	// Early validation to prevent operations on nil nodes
+	if node == nil {
+		return nil, errors.New("cannot rotate nil node")
+	}
+
+	// Get the left node before any modifications
+	leftNode, err := node.getLeftNode(tree)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get left node: %w", err)
+	}
+	if leftNode == nil {
+		return nil, errors.New("cannot rotate right with nil left child")
+	}
+
+	// Get right node of left child before any modifications
+	rightOfLeft, err := leftNode.getRightNode(tree)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get right of left node: %w", err)
+	}
+
+	// Add original nodes to orphans for tracking
 	tree.addOrphan(node)
+	tree.addOrphan(leftNode)
+
+	// Mutate nodes - this changes their keys and marks them dirty
 	tree.mutateNode(node)
+	tree.mutateNode(leftNode)
 
-	tree.addOrphan(node.left(tree))
-	newNode := node.left(tree)
-	tree.mutateNode(newNode)
+	// Update node references in a clear sequence
+	// 1. First update the left child connection
+	node.setLeft(rightOfLeft)
 
-	node.setLeft(newNode.right(tree))
-	newNode.setRight(node)
+	// 2. Then update the right child connection of leftNode
+	leftNode.setRight(node)
 
+	// Update heights and sizes after rotation
 	err = node.calcHeightAndSize(tree)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to recalculate node height after rotation: %w", err)
 	}
 
-	err = newNode.calcHeightAndSize(tree)
+	err = leftNode.calcHeightAndSize(tree)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to recalculate leftNode height after rotation: %w", err)
 	}
 
-	return newNode, nil
+	// Mark hash as dirty since tree structure changed
+	if tree.hashedVersion == tree.version.Load() {
+		tree.hashedVersion = -1
+	}
+
+	return leftNode, nil
 }
 
 // Rotate left and return the new node and orphan.
 func (tree *Tree) rotateLeft(node *Node) (*Node, error) {
 	var err error
+
+	// Early validation to prevent operations on nil nodes
+	if node == nil {
+		return nil, errors.New("cannot rotate nil node")
+	}
+
+	// Get the right node before any modifications
+	rightNode, err := node.getRightNode(tree)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get right node: %w", err)
+	}
+	if rightNode == nil {
+		return nil, errors.New("cannot rotate left with nil right child")
+	}
+
+	// Get left node of right child before any modifications
+	leftOfRight, err := rightNode.getLeftNode(tree)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get left of right node: %w", err)
+	}
+
+	// Add original nodes to orphans for tracking
 	tree.addOrphan(node)
+	tree.addOrphan(rightNode)
+
+	// Mutate nodes - this changes their keys and marks them dirty
 	tree.mutateNode(node)
+	tree.mutateNode(rightNode)
 
-	tree.addOrphan(node.right(tree))
-	newNode := node.right(tree)
-	tree.mutateNode(newNode)
+	// Update node references in a clear sequence
+	// 1. First update the right child connection
+	node.setRight(leftOfRight)
 
-	node.setRight(newNode.left(tree))
-	newNode.setLeft(node)
+	// 2. Then update the left child connection of rightNode
+	rightNode.setLeft(node)
 
+	// Update heights and sizes after rotation
 	err = node.calcHeightAndSize(tree)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to recalculate node height after rotation: %w", err)
 	}
 
-	err = newNode.calcHeightAndSize(tree)
+	err = rightNode.calcHeightAndSize(tree)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to recalculate rightNode height after rotation: %w", err)
 	}
 
-	return newNode, nil
+	// Mark hash as dirty since tree structure changed
+	if tree.hashedVersion == tree.version.Load() {
+		tree.hashedVersion = -1
+	}
+
+	return rightNode, nil
 }
 
 func (node *Node) get(t *Tree, key []byte) (index int64, value []byte, err error) {
@@ -390,18 +454,34 @@ func (node *Node) writeHashToBuffer(buf *bytes.Buffer) {
 		buf.Write(tmp[:n])
 		buf.Write(valueHash[:])
 	} else {
-		leftHash := node.leftNode.hash
-		if leftHash == nil {
-			panic("unexpected nil left hash")
+		// Safely handle the left node hash
+		var leftHash []byte
+		if node.leftNode == nil {
+			panic("left child node cannot be nil during hash calculation")
+		} else {
+			leftHash = node.leftNode.hash
+			if leftHash == nil {
+				// Compute hash if needed - this is safer than panicking
+				leftHash = node.leftNode._hash()
+			}
 		}
+
 		n = binary.PutUvarint(tmp[:], uint64(len(leftHash)))
 		buf.Write(tmp[:n])
 		buf.Write(leftHash)
 
-		rightHash := node.rightNode.hash
-		if rightHash == nil {
-			panic("unexpect nil right hash")
+		// Safely handle the right node hash
+		var rightHash []byte
+		if node.rightNode == nil {
+			panic("right child node cannot be nil during hash calculation")
+		} else {
+			rightHash = node.rightNode.hash
+			if rightHash == nil {
+				// Compute hash if needed - this is safer than panicking
+				rightHash = node.rightNode._hash()
+			}
 		}
+
 		n = binary.PutUvarint(tmp[:], uint64(len(rightHash)))
 		buf.Write(tmp[:n])
 		buf.Write(rightHash)
