@@ -1273,9 +1273,12 @@ func (tree *Tree) WorkingHash() []byte {
 	tree.version.Add(1)
 	tree.resetSequences()
 
-	// if err := tree.sql.closeHangingIterators(); err != nil {
-	// 	panic(err)
-	// }
+	if err := tree.sql.closeHangingIterators(); err != nil {
+		panic(err)
+	}
+
+	tree.sql.readPool.SetSavingTree()
+	defer tree.sql.readPool.UnsetSavingTree()
 
 	hash := tree.computeHash()
 
