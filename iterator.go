@@ -231,9 +231,9 @@ func (i *TreeIterator) Close() error {
 }
 
 func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err error) {
-	if tree.immutable {
-		return tree.IteratorAt(tree.version.Load(), start, end, inclusive)
-	}
+	// if tree.immutable {
+	// 	return tree.IteratorAt(tree.version.Load(), start, end, inclusive)
+	// }
 
 	itr = &TreeIterator{
 		tree:      tree,
@@ -254,9 +254,9 @@ func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err
 }
 
 func (tree *Tree) ReverseIterator(start, end []byte) (itr Iterator, err error) {
-	if tree.immutable {
-		return tree.ReverseIteratorAt(tree.version.Load(), start, end)
-	}
+	// if tree.immutable {
+	// 	return tree.ReverseIteratorAt(tree.version.Load(), start, end)
+	// }
 
 	itr = &TreeIterator{
 		tree:      tree,

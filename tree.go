@@ -188,9 +188,10 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 
 	treeVersion := tree.version.Load()
 
-	if err := tree.sql.closeHangingIterators(); err != nil {
-		return nil, 0, err
-	}
+	// TODO: fix query_trace_tx/query_trace_block panic (use after free)
+	// if err := tree.sql.closeHangingIterators(); err != nil {
+	// 	return nil, 0, err
+	// }
 
 	tree.sql.readPool.SetSavingTree()
 	defer tree.sql.readPool.UnsetSavingTree()
@@ -1301,9 +1302,10 @@ func (tree *Tree) WorkingHash() []byte {
 	tree.version.Add(1)
 	tree.resetSequences()
 
-	if err := tree.sql.closeHangingIterators(); err != nil {
-		panic(err)
-	}
+	// TODO: fix query_trace_tx/query_trace_block panic (use after free)
+	// if err := tree.sql.closeHangingIterators(); err != nil {
+	// 	panic(err)
+	// }
 
 	tree.sql.readPool.SetSavingTree()
 	defer tree.sql.readPool.UnsetSavingTree()
