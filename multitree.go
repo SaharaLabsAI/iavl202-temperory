@@ -206,8 +206,8 @@ func (mt *MultiTree) SaveVersionConcurrently() ([]byte, int64, error) {
 		// sz := workingSize.Load()
 		// fmt.Printf("version=%d work-bytes=%s work-size=%s mem-ceiling=%s\n",
 		// 	version, humanize.IBytes(bz), humanize.Comma(sz), humanize.IBytes(mt.treeOpts.CheckpointMemory))
-		mt.treeOpts.MetricsProxy.SetGauge(float32(workingBytes.Load()), "iavl_v2", "working_bytes")
-		mt.treeOpts.MetricsProxy.SetGauge(float32(workingSize.Load()), "iavl_v2", "working_size")
+		mt.treeOpts.MetricsProxy.SetGauge(float32(workingBytes.Load()), "iavl2", "working_bytes")
+		mt.treeOpts.MetricsProxy.SetGauge(float32(workingSize.Load()), "iavl2", "working_size")
 	}
 
 	return mt.Hash(), version, errors.Join(errs...)

@@ -72,7 +72,7 @@ func (i *TreeIterator) Valid() bool {
 
 func (i *TreeIterator) Next() {
 	if i.metrics != nil {
-		defer i.metrics.MeasureSince(time.Now(), "iavl_v2", "iterator", "next")
+		defer i.metrics.MeasureSince(time.Now(), "iavl2", "iterator", "next")
 	}
 	if !i.valid {
 		return
@@ -247,7 +247,7 @@ func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err
 	}
 
 	if tree.metricsProxy != nil {
-		tree.metricsProxy.IncrCounter(1, "iavl_v2", "iterator", "open")
+		tree.metricsProxy.IncrCounter(1, "iavl2", "iterator", "open")
 	}
 	itr.Next()
 	return itr, err
@@ -270,7 +270,7 @@ func (tree *Tree) ReverseIterator(start, end []byte) (itr Iterator, err error) {
 	}
 
 	if tree.metricsProxy != nil {
-		tree.metricsProxy.IncrCounter(1, "iavl_v2", "iterator", "open")
+		tree.metricsProxy.IncrCounter(1, "iavl2", "iterator", "open")
 	}
 	itr.Next()
 	return itr, nil
@@ -301,7 +301,7 @@ func (i *KVIterator) Valid() bool {
 
 func (i *KVIterator) Next() {
 	if i.metrics != nil {
-		defer i.metrics.MeasureSince(time.Now(), "iavl_v2", "kv iterator", "next")
+		defer i.metrics.MeasureSince(time.Now(), "iavl2", "kv iterator", "next")
 	}
 	if !i.valid {
 		return
@@ -357,7 +357,7 @@ func (i *KVIterator) Error() error {
 func (i *KVIterator) Close() error {
 	if i.valid {
 		if i.metrics != nil {
-			i.metrics.IncrCounter(1, "iavl_v2", "iterator", "close")
+			i.metrics.IncrCounter(1, "iavl2", "iterator", "close")
 		}
 		i.valid = false
 		return i.sql.readPool.CloseKVIterstor(i.itrIdx)
@@ -381,7 +381,7 @@ func (tree *Tree) IteratorAt(version int64, start, end []byte, inclusive bool) (
 	}
 
 	if tree.metricsProxy != nil {
-		tree.metricsProxy.IncrCounter(1, "iavl_v2", "iterator", "open")
+		tree.metricsProxy.IncrCounter(1, "iavl2", "iterator", "open")
 	}
 
 	kvItr.Next()
@@ -405,7 +405,7 @@ func (tree *Tree) ReverseIteratorAt(version int64, start, end []byte) (Iterator,
 	}
 
 	if tree.metricsProxy != nil {
-		tree.metricsProxy.IncrCounter(1, "iavl_v2", "iterator", "open")
+		tree.metricsProxy.IncrCounter(1, "iavl2", "iterator", "open")
 	}
 
 	kvItr.Next()
@@ -427,7 +427,7 @@ func (tree *Tree) IteratorVersionDescLeaves(version int64, limit int) (Iterator,
 	}
 
 	if tree.metricsProxy != nil {
-		tree.metricsProxy.IncrCounter(1, "iavl_v2", "iterator", "open")
+		tree.metricsProxy.IncrCounter(1, "iavl2", "iterator", "open")
 	}
 
 	kvItr.Next()
@@ -452,7 +452,7 @@ func (tree *Tree) WrongBranchHashIterator(start, end int64) (Iterator, error) {
 	}
 
 	if tree.metricsProxy != nil {
-		tree.metricsProxy.IncrCounter(1, "iavl_v2", "iterator", "open")
+		tree.metricsProxy.IncrCounter(1, "iavl2", "iterator", "open")
 	}
 
 	itr.Next()
@@ -488,7 +488,7 @@ func (i *WrongBranchHashIterator) Valid() bool {
 
 func (i *WrongBranchHashIterator) Next() {
 	if i.metrics != nil {
-		defer i.metrics.MeasureSince(time.Now(), "iavl_v2", "kv iterator", "next")
+		defer i.metrics.MeasureSince(time.Now(), "iavl2", "kv iterator", "next")
 	}
 	if !i.valid {
 		return
@@ -589,7 +589,7 @@ func (i *WrongBranchHashIterator) Error() error {
 func (i *WrongBranchHashIterator) Close() error {
 	if i.valid {
 		if i.metrics != nil {
-			i.metrics.IncrCounter(1, "iavl_v2", "iterator", "close")
+			i.metrics.IncrCounter(1, "iavl2", "iterator", "close")
 		}
 		i.valid = false
 

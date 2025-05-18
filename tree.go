@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	metricsNamespace  = "iavl_v2"
+	metricsNamespace  = "iavl2"
 	leafSequenceStart = uint32(1 << 31)
 )
 
