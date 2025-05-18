@@ -283,6 +283,17 @@ func (sql *SqliteDb) init() error {
 		return err
 	}
 	if !hasRow {
+		pageSize := max(os.Getpagesize(), defaultPageSize)
+		sql.logger.Info(fmt.Sprintf("setting page size to %s", humanize.Bytes(uint64(pageSize))))
+		err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA page_size=%d; VACUUM;", pageSize))
+		if err != nil {
+			return err
+		}
+		err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA journal_mode=%s;", defaultJournalMode))
+		if err != nil {
+			return err
+		}
+
 		err = sql.treeWrite.Exec(`
 CREATE TABLE orphan (version int, sequence int, at int);
 CREATE INDEX orphan_idx ON orphan (at DESC);
@@ -296,16 +307,6 @@ CREATE TABLE root (
 			return err
 		}
 
-		pageSize := max(os.Getpagesize(), defaultPageSize)
-		sql.logger.Info(fmt.Sprintf("setting page size to %s", humanize.Bytes(uint64(pageSize))))
-		err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA page_size=%d; VACUUM;", pageSize))
-		if err != nil {
-			return err
-		}
-		err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA journal_mode=%s;", defaultJournalMode))
-		if err != nil {
-			return err
-		}
 		sql.logger.Info(fmt.Sprintf("creating shard %d", defaultShardID))
 		err := sql.treeWrite.Exec(fmt.Sprintf("CREATE TABLE tree_%d (version int, sequence int, bytes blob, orphaned bool);", defaultShardID))
 		if err != nil {
@@ -325,16 +326,6 @@ CREATE TABLE root (
 		return err
 	}
 	if !hasRow {
-		err = sql.leafWrite.Exec(`
-CREATE TABLE leaf (version int, sequence int, key blob, bytes blob, orphaned bool);
-CREATE UNIQUE INDEX IF NOT EXISTS leaf_idx ON leaf (version DESC, sequence);
-CREATE UNIQUE INDEX IF NOT EXISTS leaf_key_idx ON leaf (key, version DESC);
-CREATE TABLE leaf_orphan (version int, sequence int, at int);
-CREATE INDEX leaf_orphan_idx ON leaf_orphan (at DESC);`)
-		if err != nil {
-			return err
-		}
-
 		pageSize := max(os.Getpagesize(), defaultPageSize)
 		sql.logger.Info(fmt.Sprintf("setting page size to %s", humanize.Bytes(uint64(pageSize))))
 		err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA page_size=%d; VACUUM;", pageSize))
@@ -342,6 +333,16 @@ CREATE INDEX leaf_orphan_idx ON leaf_orphan (at DESC);`)
 			return err
 		}
 		err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA journal_mode=%s;", defaultJournalMode))
+		if err != nil {
+			return err
+		}
+
+		err = sql.leafWrite.Exec(`
+CREATE TABLE leaf (version int, sequence int, key blob, bytes blob, orphaned bool);
+CREATE UNIQUE INDEX IF NOT EXISTS leaf_idx ON leaf (version DESC, sequence);
+CREATE UNIQUE INDEX IF NOT EXISTS leaf_key_idx ON leaf (key, version DESC);
+CREATE TABLE leaf_orphan (version int, sequence int, at int);
+CREATE INDEX leaf_orphan_idx ON leaf_orphan (at DESC);`)
 		if err != nil {
 			return err
 		}
