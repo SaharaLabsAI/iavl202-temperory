@@ -51,7 +51,6 @@ type Tree struct {
 	leafSequence   uint32
 	branchSequence uint32
 	isReplaying    bool
-	evictionDepth  int8
 
 	immutable         bool
 	hashedVersion     int64
@@ -94,7 +93,6 @@ func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 		storeLeafValues: opts.StateStorage,
 		heightFilter:    opts.HeightFilter,
 		metricsProxy:    opts.MetricsProxy,
-		evictionDepth:   opts.EvictionDepth,
 		leafSequence:    leafSequenceStart,
 		immutable:       false,
 		hashedVersion:   0,
@@ -357,7 +355,7 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 		}
 
 		// Apply eviction if at or beyond the eviction depth
-		if current.depth >= tree.evictionDepth {
+		if current.node.subtreeHeight < 2 {
 			nodesToEvict[current.node] = true
 		}
 	}
@@ -1350,7 +1348,6 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 		storeLeafValues: tree.storeLeafValues,
 		heightFilter:    tree.heightFilter,
 		metricsProxy:    tree.metricsProxy,
-		evictionDepth:   tree.evictionDepth,
 		leafSequence:    leafSequenceStart,
 		hashedVersion:   version,
 		cache:           make(map[string][]byte),
@@ -1385,7 +1382,6 @@ func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
 		storeLeafValues: tree.storeLeafValues,
 		heightFilter:    tree.heightFilter,
 		metricsProxy:    tree.metricsProxy,
-		evictionDepth:   tree.evictionDepth,
 		leafSequence:    leafSequenceStart,
 		hashedVersion:   version,
 		cache:           make(map[string][]byte),
