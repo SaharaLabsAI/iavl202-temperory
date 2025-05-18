@@ -262,7 +262,7 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 	}
 
 	// Maximum number of worker goroutines to use
-	const maxWorkers = 4
+	const maxWorkers = 8
 
 	// Initialize shared data structures with appropriate capacity
 	tree.branches = make([]*Node, 0, 1024)
@@ -1266,7 +1266,7 @@ func (tree *Tree) NewLeafNode(key []byte, value []byte) *Node {
 		node.hash = value
 	} else {
 		node.value = value
-		node._hash()
+		// node._hash() // parallel hash in deepHashParallel
 		if !tree.storeLeafValues {
 			node.value = nil
 		}

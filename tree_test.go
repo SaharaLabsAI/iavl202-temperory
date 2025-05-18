@@ -54,7 +54,7 @@ func TestTree_Build_Load(t *testing.T) {
 	tmpDir := t.TempDir()
 	opts := testutil.NewTreeBuildOptions().With10_000()
 	multiTree := NewMultiTree(NewTestLogger(), tmpDir, TreeOptions{
-		HeightFilter: 0, StateStorage: false, EvictionDepth: 14, MetricsProxy: metrics.NewStructMetrics(),
+		HeightFilter: 0, StateStorage: true, EvictionDepth: 14, MetricsProxy: metrics.NewStructMetrics(),
 	})
 	itrs, ok := opts.Iterator.(*bench.ChangesetIterators)
 	require.True(t, ok)
