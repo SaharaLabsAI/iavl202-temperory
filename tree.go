@@ -712,6 +712,8 @@ func (tree *Tree) Remove(key []byte) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 
+	delete(tree.cache, string(key))
+
 	newRoot, _, value, removed, err := tree.recursiveRemove(tree.root, key)
 	if err != nil {
 		return nil, false, err
@@ -720,7 +722,6 @@ func (tree *Tree) Remove(key []byte) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 
-	delete(tree.cache, string(key))
 	tree.deleted[string(key)] = true
 	tree.modificationCount++
 
