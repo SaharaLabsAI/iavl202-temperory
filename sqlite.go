@@ -23,6 +23,7 @@ const defaultMaxPoolSize = 1000
 const defaultPageSize = 4096 * 8 // 32K
 const defaultThreadsCount = 8
 const defaultAnalysisLimit = 2000
+const defaultIncrementalVacuum = 50
 
 // journal mode is database wide, only need to set once on write connections
 const defaultJournalMode = "MEMORY"
@@ -293,6 +294,10 @@ func (sql *SqliteDb) init() error {
 		if err != nil {
 			return err
 		}
+		err = sql.treeWrite.Exec("PRAGMA auto_vacuum=INCREMENTAL;")
+		if err != nil {
+			return err
+		}
 
 		err = sql.treeWrite.Exec(`
 CREATE TABLE orphan (version int, sequence int, at int);
@@ -333,6 +338,10 @@ CREATE TABLE root (
 			return err
 		}
 		err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA journal_mode=%s;", defaultJournalMode))
+		if err != nil {
+			return err
+		}
+		err = sql.leafWrite.Exec("PRAGMA auto_vacuum=INCREMENTAL;")
 		if err != nil {
 			return err
 		}

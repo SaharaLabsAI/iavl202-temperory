@@ -277,6 +277,9 @@ func (w *sqlWriter) leafLoop(ctx context.Context) error {
 		// if err = w.sql.leafWrite.Exec("PRAGMA wal_checkpoint(RESTART)"); err != nil {
 		// 	w.logger.Error("failed leaf wal_checkpoint", "error", err)
 		// }
+		if err := w.sql.leafWrite.Exec(fmt.Sprintf("PRAGMA incremental_vacuum(%d)", defaultIncrementalVacuum)); err != nil {
+			res.err = fmt.Errorf("failed leaf incremental vacuum; %w", err)
+		}
 		w.leafResult <- res
 	}
 	for {
@@ -518,6 +521,9 @@ func (w *sqlWriter) treeLoop(ctx context.Context) error {
 		// if err := w.sql.treeWrite.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		// 	res.err = fmt.Errorf("failed tree checkpoint; %w", err)
 		// }
+		if err := w.sql.treeWrite.Exec(fmt.Sprintf("PRAGMA incremental_vacuum(%d)", defaultIncrementalVacuum)); err != nil {
+			res.err = fmt.Errorf("failed tree incremental vacuum; %w", err)
+		}
 		w.treeResult <- res
 	}
 	for {
