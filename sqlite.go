@@ -375,7 +375,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	err = sql.treeWrite.Exec("PRAGMA synchronous=FULL;")
+	err = sql.treeWrite.Exec("PRAGMA synchronous=EXTRA;")
 	if err != nil {
 		return err
 	}
@@ -419,7 +419,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	err = sql.leafWrite.Exec("PRAGMA synchronous=FULL;")
+	err = sql.leafWrite.Exec("PRAGMA synchronous=EXTRA;")
 	if err != nil {
 		return err
 	}
