@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -248,12 +249,217 @@ func (tree *Tree) computeHash() []byte {
 		return tree.root.Hash()
 	}
 
-	tree.deepHash(tree.root, 0)
+	tree.deepHashParallel(tree.root, 0)
+
 	tree.hashedVersion = currentVersion
 	tree.modificationCount = 0
 	return tree.root.Hash()
 }
 
+func (tree *Tree) deepHashParallel(node *Node, depth int8) {
+	if node == nil {
+		return
+	}
+
+	// Maximum number of worker goroutines to use
+	const maxWorkers = 4
+
+	// Initialize shared data structures with appropriate capacity
+	tree.branches = make([]*Node, 0, 1024)
+	tree.leaves = make([]*Node, 0, 1024)
+
+	// First pass: collect nodes with a sequential traversal
+	// This ensures we have all the nodes loaded in memory in the right order
+	type nodeWithDepth struct {
+		node  *Node
+		depth int8
+	}
+
+	// Track all branch nodes and leaf nodes
+	allBranches := make([]*Node, 0, 1024)
+	allLeaves := make([]*Node, 0, 1024)
+
+	var toProcess = []nodeWithDepth{{node: node, depth: depth}}
+	treeVersion := tree.version.Load()
+
+	// Use a simple breadth-first traversal to collect all nodes first
+	// This avoids stack overflows with very deep trees
+	for len(toProcess) > 0 {
+		// Pop the first node
+		current := toProcess[0]
+		toProcess = toProcess[1:]
+
+		// Skip nodes from other versions
+		if current.node.nodeKey.Version() != treeVersion && !current.node.dirty {
+			continue
+		}
+
+		// Handle leaf nodes
+		if current.node.isLeaf() {
+			allLeaves = append(allLeaves, current.node)
+			continue
+		}
+
+		// Handle branch nodes - get both children first
+		if current.node.leftNode == nil {
+			leftNode, err := current.node.getLeftNode(tree)
+			if err != nil {
+				panic(fmt.Sprintf("Error getting left node: %v", err))
+			}
+			current.node.leftNode = leftNode
+		}
+
+		if current.node.rightNode == nil {
+			rightNode, err := current.node.getRightNode(tree)
+			if err != nil {
+				panic(fmt.Sprintf("Error getting right node: %v", err))
+			}
+			current.node.rightNode = rightNode
+		}
+
+		// Add children to process queue
+		if current.node.leftNode != nil {
+			toProcess = append(toProcess, nodeWithDepth{
+				node:  current.node.leftNode,
+				depth: current.depth + 1,
+			})
+		}
+
+		if current.node.rightNode != nil {
+			toProcess = append(toProcess, nodeWithDepth{
+				node:  current.node.rightNode,
+				depth: current.depth + 1,
+			})
+		}
+
+		// Add this branch node to our collection
+		allBranches = append(allBranches, current.node)
+	}
+
+	// 1. STEP 1: MAP - Process leaf nodes in parallel (they have no dependencies)
+	leafChan := make(chan *Node, len(allLeaves))
+	for _, leaf := range allLeaves {
+		leafChan <- leaf
+	}
+	close(leafChan)
+
+	var leafWg sync.WaitGroup
+	for i := 0; i < min(maxWorkers, len(allLeaves)); i++ {
+		leafWg.Add(1)
+		go func() {
+			defer leafWg.Done()
+			for leaf := range leafChan {
+				leaf._hash()
+			}
+		}()
+	}
+	leafWg.Wait()
+
+	// 2. STEP 2: MAP-REDUCE - Process branch nodes in batches by height
+	// Sort branch nodes by height (ascending), so we process lowest height first
+	// This ensures dependencies are satisfied before a node is processed
+	type nodeByHeight struct {
+		node   *Node
+		height int8
+	}
+
+	nodesByHeight := make(map[int8][]*Node)
+	var heights []int8
+
+	// Group nodes by height
+	for _, branch := range allBranches {
+		h := branch.subtreeHeight
+		if _, exists := nodesByHeight[h]; !exists {
+			heights = append(heights, h)
+		}
+		nodesByHeight[h] = append(nodesByHeight[h], branch)
+	}
+
+	// Sort heights (we need to process from lowest to highest)
+	sort.Slice(heights, func(i, j int) bool {
+		return heights[i] < heights[j]
+	})
+
+	// Process branches by height (ensures dependencies are resolved)
+	for _, height := range heights {
+		branches := nodesByHeight[height]
+
+		// Create a worker pool for this height level
+		branchChan := make(chan *Node, len(branches))
+		for _, branch := range branches {
+			branchChan <- branch
+		}
+		close(branchChan)
+
+		var branchWg sync.WaitGroup
+		for i := 0; i < min(maxWorkers, len(branches)); i++ {
+			branchWg.Add(1)
+			go func() {
+				defer branchWg.Done()
+				for branch := range branchChan {
+					// Ensure both children have hashes
+					if branch.leftNode != nil && branch.leftNode.hash == nil {
+						branch.leftNode._hash()
+					}
+					if branch.rightNode != nil && branch.rightNode.hash == nil {
+						branch.rightNode._hash()
+					}
+
+					// Now hash the branch
+					branch._hash()
+				}
+			}()
+		}
+		branchWg.Wait()
+	}
+
+	// Add nodes to tree's collections
+	tree.branches = allBranches
+	tree.leaves = allLeaves
+
+	// 3. STEP 3: Post-processing - Apply height filter and eviction
+	nodesToEvict := make(map[*Node]bool)
+	nodesToReturn := make(map[*Node]bool)
+
+	for _, branch := range allBranches {
+		// Apply height filter if enabled
+		if tree.heightFilter > 0 {
+			leftNode := branch.leftNode
+			rightNode := branch.rightNode
+
+			if leftNode != nil && leftNode.isLeaf() {
+				if !leftNode.dirty {
+					nodesToReturn[leftNode] = true
+				}
+				branch.leftNode = nil
+			}
+
+			if rightNode != nil && rightNode.isLeaf() {
+				if !rightNode.dirty {
+					nodesToReturn[rightNode] = true
+				}
+				branch.rightNode = nil
+			}
+		}
+
+		// Apply eviction by subtree height
+		if branch.subtreeHeight < 2 {
+			nodesToEvict[branch] = true
+		}
+	}
+
+	// Apply eviction
+	for node := range nodesToEvict {
+		node.evictChildren()
+	}
+
+	// Return nodes to pool
+	for node := range nodesToReturn {
+		tree.returnNode(node)
+	}
+}
+
+// Original deepHash function remains for compatibility
 func (tree *Tree) deepHash(node *Node, depth int8) {
 	type nodeWithDepth struct {
 		node    *Node
