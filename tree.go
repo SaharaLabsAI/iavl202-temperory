@@ -1317,12 +1317,9 @@ func (tree *Tree) WorkingHash() []byte {
 }
 
 func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
-	exists, err := tree.sql.HasRoot(version)
+	root, err := tree.sql.LoadRoot(version)
 	if err != nil {
 		return nil, err
-	}
-	if !exists {
-		return nil, fmt.Errorf("root not found for version %d", version)
 	}
 
 	// We can discard whole pool after usage
@@ -1338,6 +1335,7 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 	}
 
 	imTree := &Tree{
+		root:            root,
 		immutable:       true,
 		sql:             sql,
 		sqlWriter:       nil,
