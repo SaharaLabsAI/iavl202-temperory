@@ -74,7 +74,6 @@ func (sql *SqliteDb) Snapshot(ctx context.Context, tree *Tree) error {
 }
 
 type SnapshotOptions struct {
-	StoreLeafValues   bool
 	DontWriteSnapshot bool
 	TraverseOrder     TraverseOrderType
 }
@@ -285,9 +284,9 @@ func (sql *SqliteDb) WriteSnapshot(
 		uniqueVersions map[int64]struct{}
 	)
 	if opts.TraverseOrder == PostOrder {
-		root, uniqueVersions, err = snap.restorePostOrderStep(nextFn, opts.StoreLeafValues)
+		root, uniqueVersions, err = snap.restorePostOrderStep(nextFn)
 	} else if opts.TraverseOrder == PreOrder {
-		root, uniqueVersions, err = snap.restorePreOrderStep(nextFn, opts.StoreLeafValues)
+		root, uniqueVersions, err = snap.restorePreOrderStep(nextFn)
 	}
 	if err != nil {
 		return nil, err
@@ -600,7 +599,7 @@ func (snap *sqliteSnapshot) prepareWrite() error {
 	return err
 }
 
-func (snap *sqliteSnapshot) restorePostOrderStep(nextFn func() (*SnapshotNode, error), isStoreLeafValues bool) (*Node, map[int64]struct{}, error) {
+func (snap *sqliteSnapshot) restorePostOrderStep(nextFn func() (*SnapshotNode, error)) (*Node, map[int64]struct{}, error) {
 	var (
 		snapshotNode   *SnapshotNode
 		err            error
@@ -629,9 +628,6 @@ func (snap *sqliteSnapshot) restorePostOrderStep(nextFn func() (*SnapshotNode, e
 			node.value = snapshotNode.Value
 			node.size = 1
 			node._hash()
-			if !isStoreLeafValues {
-				node.value = nil
-			}
 
 			count++
 			if err := snap.writeSnapNode(node, snapshotNode.Version, count, ordinal, count); err != nil {
@@ -670,7 +666,7 @@ func (snap *sqliteSnapshot) restorePostOrderStep(nextFn func() (*SnapshotNode, e
 	return stack[0], uniqueVersions, nil
 }
 
-func (snap *sqliteSnapshot) restorePreOrderStep(nextFn func() (*SnapshotNode, error), isStoreLeafValues bool) (*Node, map[int64]struct{}, error) {
+func (snap *sqliteSnapshot) restorePreOrderStep(nextFn func() (*SnapshotNode, error)) (*Node, map[int64]struct{}, error) {
 	var (
 		count          int
 		step           func() (*Node, error)
@@ -696,9 +692,6 @@ func (snap *sqliteSnapshot) restorePreOrderStep(nextFn func() (*SnapshotNode, er
 			node.value = snapshotNode.Value
 			node.size = 1
 			node._hash()
-			if !isStoreLeafValues {
-				node.value = nil
-			}
 		} else {
 			node.leftNode, err = step()
 			if err != nil {

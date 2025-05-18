@@ -42,12 +42,11 @@ type Tree struct {
 	pool         *NodePool
 
 	// options
-	maxWorkingSize  uint64
-	workingBytes    uint64
-	workingSize     int64
-	storeLeafValues bool
-	heightFilter    int8
-	metricsProxy    metrics.Proxy
+	maxWorkingSize uint64
+	workingBytes   uint64
+	workingSize    int64
+	heightFilter   int8
+	metricsProxy   metrics.Proxy
 
 	// state
 	branches       []*Node
@@ -91,20 +90,19 @@ func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 	}
 
 	tree := &Tree{
-		sql:             sql,
-		sqlWriter:       sql.newSQLWriter(),
-		writerCancel:    cancel,
-		pool:            pool,
-		metrics:         opts.MetricsProxy,
-		maxWorkingSize:  1.5 * 1024 * 1024 * 1024,
-		storeLeafValues: opts.StateStorage,
-		heightFilter:    opts.HeightFilter,
-		metricsProxy:    opts.MetricsProxy,
-		leafSequence:    leafSequenceStart,
-		immutable:       false,
-		hashedVersion:   -1,
-		cache:           make(map[string][]byte),
-		deleted:         make(map[string]bool),
+		sql:            sql,
+		sqlWriter:      sql.newSQLWriter(),
+		writerCancel:   cancel,
+		pool:           pool,
+		metrics:        opts.MetricsProxy,
+		maxWorkingSize: 1.5 * 1024 * 1024 * 1024,
+		heightFilter:   opts.HeightFilter,
+		metricsProxy:   opts.MetricsProxy,
+		leafSequence:   leafSequenceStart,
+		immutable:      false,
+		hashedVersion:  -1,
+		cache:          make(map[string][]byte),
+		deleted:        make(map[string]bool),
 	}
 
 	tree.version.Store(0)
@@ -290,7 +288,7 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 		toProcess = toProcess[1:]
 
 		// Skip nodes from other versions
-		if current.node.nodeKey.Version() != treeVersion && !current.node.dirty {
+		if current.node.nodeKey.Version() != treeVersion && !current.node.dirty && len(current.node.hash) > 0 {
 			continue
 		}
 
@@ -793,10 +791,7 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 						tree.workingBytes -= currentNode.sizeBytes()
 					}
 					currentNode.SetValue(currentFrame.value)
-					currentNode._hash()
-					if !tree.storeLeafValues {
-						currentNode.SetValue(nil)
-					}
+					// currentNode._hash() // parallel hash in deepHashParallel
 					tree.workingBytes += currentNode.sizeBytes()
 				}
 
@@ -1267,9 +1262,6 @@ func (tree *Tree) NewLeafNode(key []byte, value []byte) *Node {
 	} else {
 		node.value = value
 		// node._hash() // parallel hash in deepHashParallel
-		if !tree.storeLeafValues {
-			node.value = nil
-		}
 	}
 
 	node.dirty = true
@@ -1525,19 +1517,18 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 	}
 
 	imTree := &Tree{
-		sql:             sql,
-		sqlWriter:       nil,
-		writerCancel:    nil,
-		pool:            sql.pool,
-		metrics:         tree.metrics,
-		maxWorkingSize:  tree.maxWorkingSize,
-		storeLeafValues: tree.storeLeafValues,
-		heightFilter:    tree.heightFilter,
-		metricsProxy:    tree.metricsProxy,
-		leafSequence:    leafSequenceStart,
-		hashedVersion:   version,
-		cache:           make(map[string][]byte),
-		deleted:         make(map[string]bool),
+		sql:            sql,
+		sqlWriter:      nil,
+		writerCancel:   nil,
+		pool:           sql.pool,
+		metrics:        tree.metrics,
+		maxWorkingSize: tree.maxWorkingSize,
+		heightFilter:   tree.heightFilter,
+		metricsProxy:   tree.metricsProxy,
+		leafSequence:   leafSequenceStart,
+		hashedVersion:  version,
+		cache:          make(map[string][]byte),
+		deleted:        make(map[string]bool),
 	}
 
 	if err := imTree.LoadVersion(version); err != nil {
@@ -1563,19 +1554,18 @@ func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
 	}
 
 	imTree := &Tree{
-		sql:             sql,
-		sqlWriter:       nil,
-		writerCancel:    nil,
-		pool:            sql.pool,
-		metrics:         tree.metrics,
-		maxWorkingSize:  tree.maxWorkingSize,
-		storeLeafValues: tree.storeLeafValues,
-		heightFilter:    tree.heightFilter,
-		metricsProxy:    tree.metricsProxy,
-		leafSequence:    leafSequenceStart,
-		hashedVersion:   version,
-		cache:           make(map[string][]byte),
-		deleted:         make(map[string]bool),
+		sql:            sql,
+		sqlWriter:      nil,
+		writerCancel:   nil,
+		pool:           sql.pool,
+		metrics:        tree.metrics,
+		maxWorkingSize: tree.maxWorkingSize,
+		heightFilter:   tree.heightFilter,
+		metricsProxy:   tree.metricsProxy,
+		leafSequence:   leafSequenceStart,
+		hashedVersion:  version,
+		cache:          make(map[string][]byte),
+		deleted:        make(map[string]bool),
 	}
 
 	if err := imTree.LoadVersion(version); err != nil {

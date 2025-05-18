@@ -246,20 +246,19 @@ func newIterTree(tree *Tree) *Tree {
 	}
 
 	itTree := &Tree{
-		sql:             sql,
-		sqlWriter:       nil,
-		writerCancel:    nil,
-		pool:            sql.pool,
-		metrics:         tree.metrics,
-		maxWorkingSize:  tree.maxWorkingSize,
-		storeLeafValues: tree.storeLeafValues,
-		heightFilter:    tree.heightFilter,
-		metricsProxy:    tree.metricsProxy,
-		leafSequence:    leafSequenceStart,
-		hashedVersion:   tree.version.Load(),
-		cache:           make(map[string][]byte),
-		deleted:         make(map[string]bool),
-		immutable:       true,
+		sql:            sql,
+		sqlWriter:      nil,
+		writerCancel:   nil,
+		pool:           sql.pool,
+		metrics:        tree.metrics,
+		maxWorkingSize: tree.maxWorkingSize,
+		heightFilter:   tree.heightFilter,
+		metricsProxy:   tree.metricsProxy,
+		leafSequence:   leafSequenceStart,
+		hashedVersion:  tree.version.Load(),
+		cache:          make(map[string][]byte),
+		deleted:        make(map[string]bool),
+		immutable:      true,
 	}
 
 	if tree.root != nil {

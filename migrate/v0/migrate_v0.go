@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"sync"
 
-	iavlv2 "github.com/cosmos/iavl/v2"
-	"github.com/cosmos/iavl/v2/migrate/core"
 	"github.com/gogo/protobuf/proto"
 	"github.com/gogo/protobuf/types"
 	"github.com/kocubinski/costor-api/logz"
 	"github.com/spf13/cobra"
+
+	iavlv2 "github.com/cosmos/iavl/v2"
+	"github.com/cosmos/iavl/v2/migrate/core"
 )
 
 func Command() *cobra.Command {
@@ -347,7 +348,7 @@ func allCommand() *cobra.Command {
 					}
 
 					root, err := sql.WriteSnapshot(cmd.Context(), tree.Version(), nextNodeFn,
-						iavlv2.SnapshotOptions{StoreLeafValues: true})
+						iavlv2.SnapshotOptions{})
 					if err != nil {
 						panic(err)
 					}
