@@ -342,7 +342,7 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 	close(leafChan)
 
 	var leafWg sync.WaitGroup
-	for i := 0; i < min(maxWorkers, len(allLeaves)); i++ {
+	for range min(maxWorkers, len(allLeaves)) {
 		leafWg.Add(1)
 		go func() {
 			defer leafWg.Done()
@@ -390,7 +390,7 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 		close(branchChan)
 
 		var branchWg sync.WaitGroup
-		for i := 0; i < min(maxWorkers, len(branches)); i++ {
+		for range min(maxWorkers, len(branches)) {
 			branchWg.Add(1)
 			go func() {
 				defer branchWg.Done()
