@@ -135,7 +135,7 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	}
 
 	if opts.BusyTimeout == 0 {
-		opts.BusyTimeout = 500
+		opts.BusyTimeout = 2000
 	}
 
 	if opts.ThreadsCount == 0 {
