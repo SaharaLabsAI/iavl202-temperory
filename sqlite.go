@@ -188,8 +188,8 @@ func (opts SqliteDbOptions) treeConnectionString(ty ConnectionType) string {
 
 func (opts SqliteDbOptions) EstimateMmapSize() (uint64, error) {
 	opts.Logger.Info("calculate mmap size")
-	opts.Logger.Info(fmt.Sprintf("leaf connection string: %s", opts.leafConnectionString(UseOption)))
-	conn, err := gosqlite.Open(opts.leafConnectionString(UseOption), opts.Mode)
+	opts.Logger.Info(fmt.Sprintf("leaf connection string: %s", opts.leafConnectionString(ReadOnly)))
+	conn, err := gosqlite.Open(opts.leafConnectionString(ReadOnly), openReadOnlyMode)
 	if err != nil {
 		return 0, err
 	}
