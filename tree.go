@@ -278,7 +278,7 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 	allLeaves := make([]*Node, 0, 1024)
 
 	var toProcess = []nodeWithDepth{{node: node, depth: depth}}
-	treeVersion := tree.version.Load()
+	nextTreeVersion := tree.version.Load() + 1
 
 	// Use a simple breadth-first traversal to collect all nodes first
 	// This avoids stack overflows with very deep trees
@@ -288,7 +288,7 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 		toProcess = toProcess[1:]
 
 		// Skip nodes from other versions
-		if current.node.nodeKey.Version() != treeVersion && !current.node.dirty && len(current.node.hash) > 0 {
+		if current.node.nodeKey.Version() != nextTreeVersion && !current.node.dirty && len(current.node.hash) > 0 {
 			continue
 		}
 
