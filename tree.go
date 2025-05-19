@@ -181,25 +181,28 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.rw.Lock()
 	defer tree.rw.Unlock()
 
-	tree.version.Add(1)
-	tree.resetSequences()
-
-	treeVersion := tree.version.Load()
-
 	// TODO: fix query_trace_tx/query_trace_block panic (use after free)
 	// if err := tree.sql.closeHangingIterators(); err != nil {
 	// 	return nil, 0, err
 	// }
+
+	dirtyTreeVersion := tree.version.Load()
+	savedTreeVersion := dirtyTreeVersion + 1
 
 	tree.sql.readPool.SetSavingTree()
 	defer tree.sql.readPool.UnsetSavingTree()
 
 	rootHash := tree.computeHash()
 
+	tree.version.Add(1)
+	tree.resetSequences()
+
 	err := tree.sqlWriter.saveTree(tree)
 	if err != nil {
-		return nil, treeVersion, err
+		return nil, dirtyTreeVersion, err
 	}
+
+	tree.resetSequences()
 
 	tree.branchOrphans = nil
 	tree.deleted = make(map[string]bool)
@@ -207,11 +210,11 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.modificationCount = 0
 
 	if err := tree.sql.resetReadConn(); err != nil {
-		return nil, treeVersion, err
+		return nil, savedTreeVersion, err
 	}
 
 	if err := tree.sql.ResetShardQueries(); err != nil {
-		return nil, treeVersion, err
+		return nil, savedTreeVersion, err
 	}
 
 	tree.leafOrphans = nil
@@ -219,7 +222,7 @@ func (tree *Tree) SaveVersion() ([]byte, int64, error) {
 	tree.branches = nil
 	tree.deletes = nil
 
-	return rootHash, treeVersion, nil
+	return rootHash, savedTreeVersion, nil
 }
 
 // ComputeHash the node and its descendants recursively. This usually mutates all
@@ -252,7 +255,7 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 		visited bool // Flag to track if children have been visited
 	}
 
-	treeVersion := tree.version.Load()
+	nextTreeVersion := tree.version.Load() + 1
 
 	// Estimate stack capacity based on tree height to avoid reallocations
 	// 2^height is roughly the maximum number of nodes
@@ -283,14 +286,14 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 		// Check if this is a leaf node
 		if current.node.isLeaf() {
 			// new leaves are written every version
-			if current.node.nodeKey.Version() == treeVersion {
+			if current.node.nodeKey.Version() == nextTreeVersion {
 				tree.leaves = append(tree.leaves, current.node)
 			}
 			continue // No further processing for leaf nodes
 		}
 
 		// Skip non-dirty or non-current version branch nodes
-		if !current.node.dirty || current.node.nodeKey.Version() != treeVersion {
+		if !current.node.dirty || current.node.nodeKey.Version() != nextTreeVersion {
 			continue
 		}
 
@@ -1297,8 +1300,6 @@ func (tree *Tree) WorkingHash() []byte {
 		return tree.root.hash
 	}
 
-	oldVersion := tree.version.Load()
-	tree.version.Add(1)
 	tree.resetSequences()
 
 	// TODO: fix query_trace_tx/query_trace_block panic (use after free)
@@ -1311,7 +1312,6 @@ func (tree *Tree) WorkingHash() []byte {
 
 	hash := tree.computeHash()
 
-	tree.version.Store(oldVersion)
 	tree.resetSequences()
 
 	return hash
