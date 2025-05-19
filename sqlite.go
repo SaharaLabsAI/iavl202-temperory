@@ -266,6 +266,10 @@ func NewSqliteDb(pool *NodePool, opts SqliteDbOptions) (*SqliteDb, error) {
 		}
 	}
 
+	if err = sql.runQuickCheck(); err != nil {
+		return nil, err
+	}
+
 	sql.readPool, err = NewSqliteReadonlyConnPool(&opts, opts.MaxPoolSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize read connection pool: %w", err)
@@ -1297,6 +1301,39 @@ func (sql *SqliteDb) runOptimize() error {
 	}
 
 	sql.logger.Info(fmt.Sprintf("tree %s indexes optimized", sql.opts.Path))
+
+	return nil
+}
+
+func (sql *SqliteDb) runQuickCheck() error {
+	start := time.Now()
+	defer func() {
+		sql.metrics.MeasureSince(start, metricsNamespace, "db_quick_check")
+		sql.logger.Warn(fmt.Sprintf("tree %s quick check, duration %d", sql.opts.Path, time.Since(start).Milliseconds()))
+	}()
+
+	eg := errgroup.Group{}
+	eg.SetLimit(2)
+
+	eg.Go(func() error {
+		if err := sql.treeWrite.Exec("PRAGMA quick_check"); err != nil {
+			return fmt.Errorf("failed to quick check tree %s: %w", sql.opts.Path, err)
+		}
+		return nil
+	})
+
+	eg.Go(func() error {
+		if err := sql.leafWrite.Exec("PRAGMA quick_check;"); err != nil {
+			return fmt.Errorf("failed to quick check tree leaf %s: %w", sql.opts.Path, err)
+		}
+		return nil
+	})
+
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+
+	sql.logger.Info(fmt.Sprintf("tree %s quick checked", sql.opts.Path))
 
 	return nil
 }
