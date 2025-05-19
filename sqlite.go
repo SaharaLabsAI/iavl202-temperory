@@ -26,9 +26,9 @@ const defaultAnalysisLimit = 2000
 const defaultIncrementalVacuum = 50
 
 // journal mode is database wide, only need to set once on write connections
-const defaultJournalMode = "MEMORY"
+const defaultJournalMode = "WAL"
 
-const openReadOnlyMode = gosqlite.OPEN_READONLY | gosqlite.OPEN_NOMUTEX
+const openReadOnlyMode = gosqlite.OPEN_READONLY
 
 type ConnectionType int
 
@@ -104,7 +104,7 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 		opts.Path = defaultSQLitePath
 	}
 	if opts.Mode == 0 {
-		opts.Mode = gosqlite.OPEN_READWRITE | gosqlite.OPEN_CREATE | gosqlite.OPEN_NOMUTEX
+		opts.Mode = gosqlite.OPEN_READWRITE | gosqlite.OPEN_CREATE
 	}
 	if opts.MmapSize == 0 {
 		// 512M
@@ -375,7 +375,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	err = sql.treeWrite.Exec("PRAGMA synchronous=EXTRA;")
+	err = sql.treeWrite.Exec("PRAGMA synchronous=OFF;")
 	if err != nil {
 		return err
 	}
@@ -404,8 +404,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	// We manually call wal_checkpoint(RESTART) in saveBranches
-	if err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", 0)); err != nil {
+	if err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", sql.opts.walPages)); err != nil {
 		return err
 	}
 
@@ -419,7 +418,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	err = sql.leafWrite.Exec("PRAGMA synchronous=EXTRA;")
+	err = sql.leafWrite.Exec("PRAGMA synchronous=OFF;")
 	if err != nil {
 		return err
 	}
@@ -448,8 +447,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	// We manually call wal_checkpoint(RESTART) in saveLeaves
-	if err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", 0)); err != nil {
+	if err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", sql.opts.walPages)); err != nil {
 		return err
 	}
 
@@ -545,7 +543,7 @@ func (sql *SqliteDb) newReadConn() (*SqliteReadConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", sql.opts.BusyTimeout*10))
+	err = conn.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d;", sql.opts.BusyTimeout))
 	if err != nil {
 		return nil, err
 	}
