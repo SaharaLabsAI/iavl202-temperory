@@ -266,9 +266,9 @@ func NewSqliteDb(pool *NodePool, opts SqliteDbOptions) (*SqliteDb, error) {
 		}
 	}
 
-	if err = sql.runQuickCheck(); err != nil {
-		return nil, err
-	}
+	// if err = sql.runQuickCheck(); err != nil {
+	// 	return nil, err
+	// }
 
 	sql.readPool, err = NewSqliteReadonlyConnPool(&opts, opts.MaxPoolSize)
 	if err != nil {
