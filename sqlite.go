@@ -19,7 +19,7 @@ import (
 
 const defaultSQLitePath = "/tmp/iavl2"
 const defaultShardID = 1
-const defaultMaxPoolSize = 200
+const defaultMaxPoolSize = 500
 const defaultPageSize = 4096 * 8 // 32K
 const defaultThreadsCount = 8
 const defaultAnalysisLimit = 2000
@@ -383,7 +383,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	if err != nil {
 		return err
 	}
-	err = sql.treeWrite.Exec("PRAGMA lock_mode=EXCLUSIVE;")
+	err = sql.treeWrite.Exec("PRAGMA lock_mode=NORMAL;")
 	if err != nil {
 		return err
 	}
@@ -426,7 +426,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	if err != nil {
 		return err
 	}
-	err = sql.leafWrite.Exec("PRAGMA lock_mode=EXCLUSIVE;")
+	err = sql.leafWrite.Exec("PRAGMA lock_mode=NORMAL;")
 	if err != nil {
 		return err
 	}
