@@ -95,7 +95,7 @@ func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
 		metricsProxy:    opts.MetricsProxy,
 		leafSequence:    leafSequenceStart,
 		immutable:       false,
-		hashedVersion:   0,
+		hashedVersion:   -1,
 		cache:           make(map[string][]byte),
 		deleted:         make(map[string]bool),
 	}
