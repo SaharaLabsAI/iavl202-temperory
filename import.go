@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"sync"
 )
 
 // maxBatchSize is the maximum size of the import batch before flushing it to the database
@@ -66,12 +65,6 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 		leafSequences: make([]uint32, version+1),
 		nodeSequences: make([]uint32, version+1),
 	}, nil
-}
-
-var bufPool = &sync.Pool{
-	New: func() interface{} {
-		return new(bytes.Buffer)
-	},
 }
 
 // waitBatch waits for previous batch (if any) to finish.
