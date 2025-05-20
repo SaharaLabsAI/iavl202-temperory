@@ -6,7 +6,7 @@ import (
 )
 
 // maxBatchSize is the maximum size of the import batch before flushing it to the database
-const importBatchSize = 200_000
+const importBatchSize = 600_000
 
 // ErrNoImport is returned when calling methods on a closed importer
 var ErrNoImport = errors.New("no import in progress")
