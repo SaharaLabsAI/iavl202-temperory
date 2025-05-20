@@ -48,6 +48,24 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 		return nil, fmt.Errorf("found version %v, must be empty", versionExists)
 	}
 
+	err = tree.sql.treeWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 10*1024*1024*1024)) // 10G
+	if err != nil {
+		return nil, err
+	}
+	err = tree.sql.treeWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", -2*1024*1024)) // 2G
+	if err != nil {
+		return nil, err
+	}
+
+	err = tree.sql.leafWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 14*1024*1024*1024)) // 14G
+	if err != nil {
+		return nil, err
+	}
+	err = tree.sql.leafWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", -2*1024*1024)) // 2G
+	if err != nil {
+		return nil, err
+	}
+
 	// NOTE: Must turn off heightFilter, otherwise imported tree root may not be consistent
 	tree.heightFilter = 0
 
@@ -251,6 +269,24 @@ func (i *Importer) Commit() error {
 		return fmt.Errorf("failed tree checkpoint; %w", err)
 	}
 	err = i.tree.LoadVersion(i.version)
+	if err != nil {
+		return err
+	}
+
+	err = i.tree.sql.treeWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", defaultMmapSize))
+	if err != nil {
+		return err
+	}
+	err = i.tree.sql.treeWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", i.tree.sql.opts.CacheSize))
+	if err != nil {
+		return err
+	}
+
+	err = i.tree.sql.leafWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", defaultMmapSize))
+	if err != nil {
+		return err
+	}
+	err = i.tree.sql.leafWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", i.tree.sql.opts.CacheSize))
 	if err != nil {
 		return err
 	}
