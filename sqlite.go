@@ -379,7 +379,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	err = sql.treeWrite.Exec("PRAGMA synchronous=NORMAL;")
+	err = sql.treeWrite.Exec("PRAGMA synchronous=OFF;")
 	if err != nil {
 		return err
 	}
@@ -388,6 +388,14 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 	err = sql.treeWrite.Exec("PRAGMA automatic_index=OFF;")
+	if err != nil {
+		return err
+	}
+	err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", sql.opts.MmapSize))
+	if err != nil {
+		return err
+	}
+	err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", sql.opts.CacheSize))
 	if err != nil {
 		return err
 	}
@@ -422,7 +430,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	err = sql.leafWrite.Exec("PRAGMA synchronous=NORMAL;")
+	err = sql.leafWrite.Exec("PRAGMA synchronous=OFF;")
 	if err != nil {
 		return err
 	}
@@ -431,6 +439,14 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 	err = sql.leafWrite.Exec("PRAGMA automatic_index=OFF;")
+	if err != nil {
+		return err
+	}
+	err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", sql.opts.MmapSize))
+	if err != nil {
+		return err
+	}
+	err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", sql.opts.CacheSize))
 	if err != nil {
 		return err
 	}
