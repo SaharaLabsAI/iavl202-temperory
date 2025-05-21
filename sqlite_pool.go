@@ -40,7 +40,7 @@ func NewSqliteReadonlyConnPool(opts *SqliteDbOptions, MaxPoolSize int) (*SqliteR
 		logger:  opts.Logger,
 	}
 
-	pool.logger.Info(fmt.Sprintf("Created readonly connection pool with max size %d", MaxPoolSize))
+	// pool.logger.Info(fmt.Sprintf("Created readonly connection pool with max size %d", MaxPoolSize))
 
 	return pool, nil
 }
