@@ -14,7 +14,7 @@ const (
 	PostOrder
 )
 
-const maxOutChanSize = 1024
+const maxOutChanSize = 256
 
 type Exporter struct {
 	tree    *Tree
@@ -26,13 +26,19 @@ type Exporter struct {
 }
 
 func (tree *Tree) Export(order TraverseOrderType) *Exporter {
+	imTree, err := tree.GetImmutableProvable(tree.version.Load())
+	if err != nil {
+		panic(err)
+	}
+	imTree.sql.pool = nil
+
 	exporter := &Exporter{
-		tree:    tree,
+		tree:    imTree,
 		out:     make(chan *Node, maxOutChanSize),
 		errCh:   make(chan error),
 		count:   0,
 		startAt: time.Now(),
-		version: tree.version.Load(),
+		version: imTree.version.Load(),
 	}
 
 	go func(traverseOrder TraverseOrderType) {
@@ -56,7 +62,7 @@ func (e *Exporter) postOrderNext(root *Node) {
 	}
 
 	stack := []*Node{root}
-	visited := make(map[*Node]bool)
+	visited := make(map[NodeKey]bool)
 
 	for len(stack) > 0 {
 		node := stack[len(stack)-1]
@@ -65,17 +71,19 @@ func (e *Exporter) postOrderNext(root *Node) {
 			stack = stack[:len(stack)-1]
 
 			e.out <- node
+			delete(visited, node.nodeKey)
 			continue
 		}
 
-		if visited[node] {
+		if visited[node.nodeKey] {
 			stack = stack[:len(stack)-1]
 
 			e.out <- node
+			delete(visited, node.nodeKey)
 			continue
 		}
 
-		visited[node] = true
+		visited[node.nodeKey] = true
 
 		right, err := node.getRightNode(e.tree)
 		if err != nil {
@@ -150,12 +158,18 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 			return nil, ErrorExportDone
 		}
 		e.count++
+
 		if e.count%200000 == 0 {
 			e.tree.sql.logger.Info("%s exported nodes %d duration %d\n", e.tree.Path(), e.count, time.Since(e.startAt).Milliseconds())
 			fmt.Printf("progress exported nodes %d duration %d\n", e.count, time.Since(e.startAt).Milliseconds())
 		}
 
-		return e.makeSnapshotNode(node), nil
+		return &SnapshotNode{
+			Key:     node.key,
+			Value:   node.value,
+			Version: node.nodeKey.Version(),
+			Height:  node.subtreeHeight,
+		}, nil
 	case err, ok := <-e.errCh:
 		if !ok {
 			// Error channel closed, check if out channel still has items
@@ -163,7 +177,12 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 			case node, ok := <-e.out:
 				if ok {
 					e.count++
-					return e.makeSnapshotNode(node), nil
+					return &SnapshotNode{
+						Key:     node.key,
+						Value:   node.value,
+						Version: node.nodeKey.Version(),
+						Height:  node.subtreeHeight,
+					}, nil
 				}
 			default:
 			}
@@ -213,29 +232,6 @@ func (e *Exporter) Close() error {
 	return e.tree.DiscardImmutableTree()
 }
 
-func (e *Exporter) makeSnapshotNode(node *Node) *SnapshotNode {
-	key := make([]byte, len(node.key[:]))
-	copy(key, node.key[:])
-
-	value := make([]byte, len(node.value[:]))
-	copy(value, node.value[:])
-
-	version := node.nodeKey.Version()
-	height := node.subtreeHeight
-
-	// For branches nodes, depends on gc to reclaim memory
-	if node.isLeaf() {
-		e.tree.sql.pool.Put(node)
-	}
-
-	return &SnapshotNode{
-		Key:     key,
-		Value:   value,
-		Version: version,
-		Height:  height,
-	}
-}
-
 func (tree *Tree) ExportVersion(version int64, order TraverseOrderType) (*Exporter, error) {
 	got, _ := tree.getRecentRoot(version)
 	if got {
@@ -246,10 +242,11 @@ func (tree *Tree) ExportVersion(version int64, order TraverseOrderType) (*Export
 	if err != nil {
 		return nil, err
 	}
+	imTree.sql.pool = nil
 
 	exporter := &Exporter{
 		tree:    imTree,
-		out:     make(chan *Node),
+		out:     make(chan *Node, maxOutChanSize),
 		errCh:   make(chan error),
 		count:   0,
 		version: version,

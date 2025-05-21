@@ -580,7 +580,13 @@ func MakeNode(pool *NodePool, nodeKey NodeKey, buf []byte) (*Node, error) {
 	}
 	buf = buf[n:]
 
-	node := pool.Get()
+	var node *Node
+	if pool != nil {
+		node = pool.Get()
+	} else {
+		node = &Node{}
+	}
+
 	node.subtreeHeight = int8(height)
 	node.nodeKey = nodeKey
 	node.size = size
