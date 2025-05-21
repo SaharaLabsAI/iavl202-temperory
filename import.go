@@ -48,7 +48,7 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 		return nil, fmt.Errorf("found version %v, must be empty", versionExists)
 	}
 
-	err = tree.sql.treeWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 10*1024*1024*1024)) // 10G
+	err = tree.sql.treeWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 10*1024*1024*1024)) // 8G
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +57,7 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 		return nil, err
 	}
 
-	err = tree.sql.leafWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 14*1024*1024*1024)) // 14G
+	err = tree.sql.leafWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 14*1024*1024*1024)) // 16G
 	if err != nil {
 		return nil, err
 	}
