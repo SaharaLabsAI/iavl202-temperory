@@ -14,7 +14,12 @@ const (
 	PostOrder
 )
 
-const maxOutChanSize = 256
+const maxOutChanSize = 64
+
+type stackEntry struct {
+	node  *Node
+	state int // 0: process left, 1: process right, 2: process self
+}
 
 type Exporter struct {
 	tree    *Tree
@@ -61,48 +66,52 @@ func (e *Exporter) postOrderNext(root *Node) {
 		return
 	}
 
-	stack := []*Node{root}
-	visited := make(map[NodeKey]bool)
+	s := []stackEntry{{node: root, state: 0}}
 
-	for len(stack) > 0 {
-		node := stack[len(stack)-1]
+	for len(s) > 0 {
+		currentEntry := &s[len(s)-1]
 
-		if node.isLeaf() {
-			stack = stack[:len(stack)-1]
-
-			e.out <- node
-			delete(visited, node.nodeKey)
+		if currentEntry.node.isLeaf() {
+			e.out <- currentEntry.node
+			s = s[:len(s)-1]
 			continue
 		}
 
-		if visited[node.nodeKey] {
-			stack = stack[:len(stack)-1]
+		// For non-leaf nodes, proceed based on state
+		switch currentEntry.state {
+		case 0: // State 0: Attempt to process the left child
+			currentEntry.state = 1 // Advance this node's state for the next time it's processed
 
-			e.out <- node
-			delete(visited, node.nodeKey)
-			continue
-		}
+			left, err := currentEntry.node.getLeftNode(e.tree)
+			if err != nil {
+				e.errCh <- err
+				return
+			}
+			if left != nil {
+				s = append(s, stackEntry{node: left, state: 0})
+				// The loop will now process the new top (left child)
+			}
+			// If no left child, currentEntry (now in state 1) remains at the top
+			// and will be processed in the next iteration.
 
-		visited[node.nodeKey] = true
+		case 1: // State 1: Attempt to process the right child
+			currentEntry.state = 2
 
-		right, err := node.getRightNode(e.tree)
-		if err != nil {
-			e.errCh <- err
-			return
-		}
+			right, err := currentEntry.node.getRightNode(e.tree)
+			if err != nil {
+				e.errCh <- err
+				return
+			}
+			if right != nil {
+				s = append(s, stackEntry{node: right, state: 0})
+				// The loop will now process the new top (right child)
+			}
+			// If no right child, currentEntry (now in state 2) remains at the top
+			// and will be processed in the next iteration.
 
-		if right != nil {
-			stack = append(stack, right)
-		}
-
-		left, err := node.getLeftNode(e.tree)
-		if err != nil {
-			e.errCh <- err
-			return
-		}
-
-		if left != nil {
-			stack = append(stack, left)
+		case 2: // State 2: Process the node itself (both children have been handled)
+			e.out <- currentEntry.node
+			s = s[:len(s)-1]
 		}
 	}
 }
