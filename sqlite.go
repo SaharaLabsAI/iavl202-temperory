@@ -24,7 +24,7 @@ const defaultPageSize = 4096 * 8 // 32K
 const defaultThreadsCount = 8
 const defaultAnalysisLimit = 2000
 const defaultIncrementalVacuum = 50
-const defaultTreeWriteCacheSize = -256 * 1025 // 256M
+const defaultWriteCacheSize = -256 * 1024 // 256M
 
 // journal mode is database wide, only need to set once on write connections
 const defaultJournalMode = "WAL"
@@ -400,7 +400,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	if err != nil {
 		return err
 	}
-	err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", defaultTreeWriteCacheSize))
+	err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", defaultWriteCacheSize/2))
 	if err != nil {
 		return err
 	}
@@ -444,6 +444,10 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 	err = sql.leafWrite.Exec("PRAGMA automatic_index=OFF;")
+	if err != nil {
+		return err
+	}
+	err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", defaultWriteCacheSize/2))
 	if err != nil {
 		return err
 	}
