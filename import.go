@@ -3,9 +3,6 @@ package iavl
 import (
 	"errors"
 	"fmt"
-	"log"
-
-	"github.com/shirou/gopsutil/v4/mem"
 )
 
 // maxBatchSize is the maximum size of the import batch before flushing it to the database
@@ -51,16 +48,11 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 		return nil, fmt.Errorf("found version %v, must be empty", versionExists)
 	}
 
-	v, err := mem.VirtualMemory()
+	err = tree.sql.treeWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 10*1024*1024*1024)) // 10G
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-
-	totalMemory := v.Total
-	leafWriteMmap := totalMemory / 2
-	branchWriteMmap := leafWriteMmap / 2
-
-	err = tree.sql.treeWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", branchWriteMmap))
+	err = tree.sql.treeWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", -2*1024*1024)) // 2G
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +61,11 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 		return nil, err
 	}
 
-	err = tree.sql.leafWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", leafWriteMmap))
+	err = tree.sql.leafWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 14*1024*1024*1024)) // 14G
+	if err != nil {
+		return nil, err
+	}
+	err = tree.sql.leafWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", -2*1024*1024)) // 2G
 	if err != nil {
 		return nil, err
 	}
@@ -282,11 +278,6 @@ func (i *Importer) Commit() error {
 	}
 
 	err = i.tree.LoadVersion(i.version)
-	if err != nil {
-		return err
-	}
-
-	err = i.tree.sql.treeWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 0))
 	if err != nil {
 		return err
 	}
