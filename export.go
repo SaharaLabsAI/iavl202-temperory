@@ -2,6 +2,8 @@ package iavl
 
 import (
 	"errors"
+	"fmt"
+	"time"
 )
 
 // TraverseOrderType is the type of the order in which the tree is traversed.
@@ -12,14 +14,14 @@ const (
 	PostOrder
 )
 
-const maxStackSize = 10_000
-const maxOutChanSize = 8_000
+const maxOutChanSize = 1024
 
 type Exporter struct {
 	tree    *Tree
 	out     chan *Node
 	errCh   chan error
 	count   int
+	startAt time.Time
 	version int64
 }
 
@@ -29,6 +31,7 @@ func (tree *Tree) Export(order TraverseOrderType) *Exporter {
 		out:     make(chan *Node, maxOutChanSize),
 		errCh:   make(chan error),
 		count:   0,
+		startAt: time.Now(),
 		version: tree.version.Load(),
 	}
 
@@ -54,7 +57,6 @@ func (e *Exporter) postOrderNext(root *Node) {
 
 	stack := []*Node{root}
 	visited := make(map[*Node]bool)
-	tempOutCh := make(chan struct{}, 1) // Signal channel for stack flow control
 
 	for len(stack) > 0 {
 		node := stack[len(stack)-1]
@@ -63,10 +65,6 @@ func (e *Exporter) postOrderNext(root *Node) {
 			stack = stack[:len(stack)-1]
 
 			e.out <- node
-			select {
-			case tempOutCh <- struct{}{}:
-			default:
-			}
 			continue
 		}
 
@@ -74,16 +72,6 @@ func (e *Exporter) postOrderNext(root *Node) {
 			stack = stack[:len(stack)-1]
 
 			e.out <- node
-			select {
-			case tempOutCh <- struct{}{}:
-			default:
-			}
-			continue
-		}
-
-		if len(stack) >= maxStackSize {
-			<-tempOutCh
-			e.tree.sql.logger.Warn("creating snapshot", "height", e.version, "node exported", e.count)
 			continue
 		}
 
@@ -117,24 +105,13 @@ func (e *Exporter) preOrderNext(root *Node) {
 	}
 
 	stack := []*Node{root}
-	tempOutCh := make(chan struct{}, 1) // Signal channel for stack flow control
 
 	for len(stack) > 0 {
-		if len(stack) >= maxStackSize {
-			<-tempOutCh
-			e.tree.sql.logger.Warn("creating snapshot", "height", e.version, "node exported", e.count)
-			continue
-		}
-
 		n := len(stack) - 1
 		node := stack[n]
 		stack = stack[:n]
 
 		e.out <- node
-		select {
-		case tempOutCh <- struct{}{}:
-		default:
-		}
 
 		if !node.isLeaf() {
 			right, err := node.getRightNode(e.tree)
@@ -173,12 +150,12 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 			return nil, ErrorExportDone
 		}
 		e.count++
-		return &SnapshotNode{
-			Key:     node.key,
-			Value:   node.value,
-			Version: node.nodeKey.Version(),
-			Height:  node.subtreeHeight,
-		}, nil
+		if e.count%200000 == 0 {
+			e.tree.sql.logger.Info("%s exported nodes %d duration %d\n", e.tree.Path(), e.count, time.Since(e.startAt).Milliseconds())
+			fmt.Printf("progress exported nodes %d duration %d\n", e.count, time.Since(e.startAt).Milliseconds())
+		}
+
+		return e.makeSnapshotNode(node), nil
 	case err, ok := <-e.errCh:
 		if !ok {
 			// Error channel closed, check if out channel still has items
@@ -186,12 +163,7 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 			case node, ok := <-e.out:
 				if ok {
 					e.count++
-					return &SnapshotNode{
-						Key:     node.key,
-						Value:   node.value,
-						Version: node.nodeKey.Version(),
-						Height:  node.subtreeHeight,
-					}, nil
+					return e.makeSnapshotNode(node), nil
 				}
 			default:
 			}
@@ -201,6 +173,7 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 	}
 }
 
+// Primary used for unit tests
 func (e *Exporter) NextRawNode() (*Node, error) {
 	select {
 	case node, ok := <-e.out:
@@ -238,6 +211,29 @@ var ErrorExportDone = errors.New("export done")
 
 func (e *Exporter) Close() error {
 	return e.tree.DiscardImmutableTree()
+}
+
+func (e *Exporter) makeSnapshotNode(node *Node) *SnapshotNode {
+	key := make([]byte, len(node.key[:]))
+	copy(key, node.key[:])
+
+	value := make([]byte, len(node.value[:]))
+	copy(value, node.value[:])
+
+	version := node.nodeKey.Version()
+	height := node.subtreeHeight
+
+	// For branches nodes, depends on gc to reclaim memory
+	if node.isLeaf() {
+		e.tree.sql.pool.Put(node)
+	}
+
+	return &SnapshotNode{
+		Key:     key,
+		Value:   value,
+		Version: version,
+		Height:  height,
+	}
 }
 
 func (tree *Tree) ExportVersion(version int64, order TraverseOrderType) (*Exporter, error) {
