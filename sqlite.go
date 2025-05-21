@@ -100,6 +100,16 @@ type SqliteDb struct {
 	treeOrphan *gosqlite.Stmt
 }
 
+func getPageSize() int {
+	pageSize := os.Getpagesize()
+
+	for pageSize < defaultPageSize {
+		pageSize = pageSize * 2
+	}
+
+	return pageSize
+}
+
 func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	if opts.Path == "" {
 		opts.Path = defaultSQLitePath
@@ -126,8 +136,7 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 		opts.Metrics = metrics.NilMetrics{}
 	}
 
-	pageSize := max(os.Getpagesize(), defaultPageSize)
-	opts.walPages = opts.WalSize / pageSize
+	opts.walPages = opts.WalSize / getPageSize()
 
 	opts.ShardTrees = false
 
@@ -289,7 +298,7 @@ func (sql *SqliteDb) init() error {
 		return err
 	}
 	if !hasRow {
-		pageSize := max(os.Getpagesize(), defaultPageSize)
+		pageSize := getPageSize()
 		sql.logger.Info(fmt.Sprintf("setting page size to %s", humanize.Bytes(uint64(pageSize))))
 		err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA page_size=%d; VACUUM;", pageSize))
 		if err != nil {
@@ -336,8 +345,7 @@ CREATE TABLE root (
 		return err
 	}
 	if !hasRow {
-		pageSize := max(os.Getpagesize(), defaultPageSize)
-		sql.logger.Info(fmt.Sprintf("setting page size to %s", humanize.Bytes(uint64(pageSize))))
+		pageSize := getPageSize()
 		err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA page_size=%d; VACUUM;", pageSize))
 		if err != nil {
 			return err
