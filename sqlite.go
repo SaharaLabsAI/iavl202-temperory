@@ -24,7 +24,6 @@ const defaultPageSize = 4096 * 8 // 32K
 const defaultThreadsCount = 8
 const defaultAnalysisLimit = 2000
 const defaultIncrementalVacuum = 50
-const defaultMmapSize = 512 * 1024 * 1024 // 512M
 
 // journal mode is database wide, only need to set once on write connections
 const defaultJournalMode = "WAL"
@@ -108,7 +107,8 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 		opts.Mode = gosqlite.OPEN_READWRITE | gosqlite.OPEN_CREATE
 	}
 	if opts.MmapSize == 0 {
-		opts.MmapSize = defaultMmapSize
+		// 512M
+		opts.MmapSize = 512 * 1024 * 1024
 	}
 	if opts.WalSize == 0 {
 		opts.WalSize = 1024 * 1024 * 100
@@ -391,11 +391,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	if err != nil {
 		return err
 	}
-	err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", defaultMmapSize))
-	if err != nil {
-		return err
-	}
-	err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", sql.opts.CacheSize))
+	err = sql.treeWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", sql.opts.CacheSize/2))
 	if err != nil {
 		return err
 	}
@@ -442,11 +438,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 	if err != nil {
 		return err
 	}
-	err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", defaultMmapSize))
-	if err != nil {
-		return err
-	}
-	err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", sql.opts.CacheSize))
+	err = sql.leafWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", sql.opts.CacheSize/2))
 	if err != nil {
 		return err
 	}
