@@ -56,20 +56,12 @@ func newImporter(tree *Tree, version int64) (*Importer, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = tree.sql.treeWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", -1*1024*1024)) // 1G
-	if err != nil {
-		return nil, err
-	}
 
 	err = tree.sql.leafWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 14*1024*1024*1024)) // 14G
 	if err != nil {
 		return nil, err
 	}
 	err = tree.sql.leafWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", -2*1024*1024)) // 2G
-	if err != nil {
-		return nil, err
-	}
-	err = tree.sql.leafWrite.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", -1*1024*1024)) // 1G
 	if err != nil {
 		return nil, err
 	}
@@ -278,6 +270,11 @@ func (i *Importer) Commit() error {
 	}
 
 	err = i.tree.LoadVersion(i.version)
+	if err != nil {
+		return err
+	}
+
+	err = i.tree.sql.treeWrite.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 0))
 	if err != nil {
 		return err
 	}
