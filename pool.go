@@ -36,6 +36,7 @@ func (np *NodePool) Get() *Node {
 	}
 	n := np.syncPool.Get().(*Node)
 	n.poolId = np.poolId.Load()
+	n.source = PoolNode
 	return n
 }
 
@@ -56,6 +57,7 @@ func (np *NodePool) Put(node *Node) {
 	node.size = 0
 	node.dirty = false
 	node.evict = false
+	node.source = PoolNode
 
 	node.poolId = 0
 	np.syncPool.Put(node)

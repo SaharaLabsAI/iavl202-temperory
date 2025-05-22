@@ -48,6 +48,13 @@ func (nk NodeKey) IsEmpty() bool {
 	return nk == emptyNodeKey
 }
 
+type NodeSource int
+
+const (
+	PoolNode NodeSource = iota
+	ManualNode
+)
+
 // Node represents a node in a Tree.
 type Node struct {
 	key           []byte
@@ -64,6 +71,7 @@ type Node struct {
 	dirty  bool
 	evict  bool
 	poolId uint64
+	source NodeSource
 }
 
 func (node *Node) String() string {
@@ -72,7 +80,7 @@ func (node *Node) String() string {
 }
 
 func (node *Node) checkValid() {
-	if node.poolId == 0 {
+	if node.source == PoolNode && node.poolId == 0 {
 		panic(fmt.Sprintf("attempt to use node (key: %s, nk: %s) after it was returned to pool or not properly initialized", node.key, node.nodeKey))
 	}
 }

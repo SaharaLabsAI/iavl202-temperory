@@ -163,6 +163,7 @@ func (i *Importer) Add(node *Node) error {
 		return fmt.Errorf("node version %v can't be greater than import version %v",
 			nodeVersion, i.version)
 	}
+	node.source = ManualNode
 
 	// We build the tree from the bottom-left up. The stack is used to store unresolved left
 	// children while constructing right children. When all children are built, the parent can
