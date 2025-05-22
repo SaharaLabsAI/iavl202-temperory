@@ -51,9 +51,9 @@ func (tree *Tree) Export(order TraverseOrderType) *Exporter {
 
 		switch traverseOrder {
 		case PostOrder:
-			exporter.postOrderNext(tree.root)
+			exporter.postOrderNext(imTree.root)
 		case PreOrder:
-			exporter.preOrderNext(tree.root)
+			exporter.preOrderNext(imTree.root)
 		}
 	}(order)
 
@@ -287,9 +287,9 @@ func (tree *Tree) ExportVersion(version int64, order TraverseOrderType) (*Export
 
 		switch traverseOrder {
 		case PostOrder:
-			exporter.postOrderNext(tree.root)
+			exporter.postOrderNext(imTree.root)
 		case PreOrder:
-			exporter.preOrderNext(tree.root)
+			exporter.preOrderNext(imTree.root)
 		}
 	}(order)
 
