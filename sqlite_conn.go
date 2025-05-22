@@ -62,12 +62,12 @@ func (c *SqliteReadConn) ResetToTreeVersion(version int64) error {
 		c.conn = nil
 	}
 
-	conn, err := gosqlite.Open(c.opts.treeConnectionString(Immutable), openReadOnlyMode)
+	conn, err := gosqlite.Open(c.opts.treeConnectionString(ReadOnly), openReadOnlyMode)
 	if err != nil {
 		return err
 	}
 
-	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS changelog;", c.opts.leafConnectionString(Immutable)))
+	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS changelog;", c.opts.leafConnectionString(ReadOnly)))
 	if err != nil {
 		conn.Close()
 		return err

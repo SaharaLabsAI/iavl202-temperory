@@ -777,7 +777,7 @@ func (sql *SqliteDb) SaveRoot(version int64, node *Node) error {
 }
 
 func (sql *SqliteDb) LoadRoot(version int64) (*Node, error) {
-	conn, err := gosqlite.Open(sql.opts.treeConnectionString(Immutable), openReadOnlyMode)
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(ReadOnly), openReadOnlyMode)
 	if err != nil {
 		return nil, err
 	}
@@ -1173,7 +1173,7 @@ func (sql *SqliteDb) GetAt(version int64, key []byte) ([]byte, error) {
 }
 
 func (sql *SqliteDb) HasRoot(version int64) (bool, error) {
-	conn, err := gosqlite.Open(sql.opts.treeConnectionString(Immutable), openReadOnlyMode)
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(ReadOnly), openReadOnlyMode)
 	if err != nil {
 		return false, err
 	}
