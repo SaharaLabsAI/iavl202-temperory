@@ -14,7 +14,7 @@ const (
 	PostOrder
 )
 
-const maxOutChanSize = 64
+const maxOutChanSize = 8192
 
 type stackEntry struct {
 	node  *Node
