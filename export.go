@@ -35,7 +35,6 @@ func (tree *Tree) Export(order TraverseOrderType) *Exporter {
 	if err != nil {
 		panic(err)
 	}
-	imTree.sql.pool = nil
 
 	exporter := &Exporter{
 		tree:    imTree,
@@ -251,7 +250,6 @@ func (tree *Tree) ExportVersion(version int64, order TraverseOrderType) (*Export
 	if err != nil {
 		return nil, err
 	}
-	imTree.sql.pool = nil
 
 	exporter := &Exporter{
 		tree:    imTree,
