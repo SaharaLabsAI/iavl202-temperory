@@ -120,14 +120,15 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 		opts.Mode = gosqlite.OPEN_READWRITE | gosqlite.OPEN_CREATE
 	}
 	if opts.MmapSize == 0 {
-		opts.MmapSize = 512 * 1024 * 1024
+		// opts.MmapSize = 512 * 1024 * 1024
+		opts.MmapSize = 0 // disable mmap, it only map the first N bytes of data into memory
 	}
 	if opts.WalSize == 0 {
 		opts.WalSize = 1024 * 1024 * 100
 	}
 	if opts.CacheSize == 0 {
-		// 512M
-		opts.CacheSize = -512 * 1024
+		// 1G
+		opts.CacheSize = -1 * 1024 * 1024
 	}
 	if opts.TempStoreSize == 0 {
 		// 200M
