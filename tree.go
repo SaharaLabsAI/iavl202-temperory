@@ -265,7 +265,7 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 
 	// Estimate stack capacity based on tree height to avoid reallocations
 	// 2^height is roughly the maximum number of nodes
-	estimatedCapacity := min(1<<(node.subtreeHeight+1), 1024)
+	estimatedCapacity := min(1<<(node.SubTreeHeight()+1), 1024)
 	stack := make([]nodeWithDepth, 0, estimatedCapacity)
 	stack = append(stack, nodeWithDepth{node: node, depth: depth, visited: false})
 
@@ -348,7 +348,7 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 		}
 
 		// Apply eviction if at or beyond the eviction depth
-		if current.node.subtreeHeight < 2 {
+		if current.node.SubTreeHeight() < 2 {
 			nodesToEvict[current.node] = true
 		}
 	}
@@ -973,7 +973,7 @@ func (tree *Tree) Height() int8 {
 	tree.rw.RLock()
 	defer tree.rw.RUnlock()
 
-	return tree.root.subtreeHeight
+	return tree.root.SubTreeHeight()
 }
 
 func (tree *Tree) nextNodeKey() NodeKey {

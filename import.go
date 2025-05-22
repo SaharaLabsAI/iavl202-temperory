@@ -172,14 +172,14 @@ func (i *Importer) Add(node *Node) error {
 	// We don't modify the stack until we've verified the built node, to avoid leaving the
 	// importer in an inconsistent state when we return an error.
 	stackSize := len(i.stack)
-	if node.subtreeHeight == 0 {
+	if node.SubTreeHeight() == 0 {
 		node.size = 1
-	} else if stackSize >= 2 && i.stack[stackSize-1].subtreeHeight < node.subtreeHeight && i.stack[stackSize-2].subtreeHeight < node.subtreeHeight {
+	} else if stackSize >= 2 && i.stack[stackSize-1].SubTreeHeight() < node.SubTreeHeight() && i.stack[stackSize-2].SubTreeHeight() < node.SubTreeHeight() {
 		leftNode := i.stack[stackSize-2]
 		rightNode := i.stack[stackSize-1]
 
-		node.leftNode = leftNode
-		node.rightNode = rightNode
+		node.setLeft(leftNode)
+		node.setRight(rightNode)
 		node.leftNodeKey = leftNode.nodeKey
 		node.rightNodeKey = rightNode.nodeKey
 		node.size = leftNode.size + rightNode.size
@@ -201,9 +201,9 @@ func (i *Importer) Add(node *Node) error {
 	}
 
 	if node.isLeaf() {
-		node.nodeKey = NewNodeKey(nodeVersion, i.nextLeafSequence(nodeVersion))
+		node.SetNodeKey(NewNodeKey(nodeVersion, i.nextLeafSequence(nodeVersion)))
 	} else {
-		node.nodeKey = NewNodeKey(nodeVersion, i.nextNodeSequence(nodeVersion))
+		node.SetNodeKey(NewNodeKey(nodeVersion, i.nextNodeSequence(nodeVersion)))
 	}
 
 	i.stack = append(i.stack, node)
@@ -228,10 +228,10 @@ func (i *Importer) Commit() error {
 		i.tree.root = nil
 	case 1:
 		n := i.stack[0]
-		if n.subtreeHeight == 0 {
-			n.nodeKey = NewNodeKey(n.Version(), i.nextLeafSequence(n.Version()))
+		if n.SubTreeHeight() == 0 {
+			n.SetNodeKey(NewNodeKey(n.Version(), i.nextLeafSequence(n.Version())))
 		} else {
-			n.nodeKey = NewNodeKey(n.Version(), i.nextNodeSequence(n.Version()))
+			n.SetNodeKey(NewNodeKey(n.Version(), i.nextNodeSequence(n.Version())))
 		}
 		if err := i.writeNode(n); err != nil {
 			return err

@@ -884,3 +884,8 @@ func (node *Node) SetKey(key []byte) {
 	node.checkValid()
 	node.key = key
 }
+
+func (node *Node) SubTreeHeight() int8 {
+	node.checkValid()
+	return node.subtreeHeight
+}
