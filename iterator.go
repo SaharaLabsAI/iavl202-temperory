@@ -111,10 +111,10 @@ func (i *TreeIterator) stepAscend() {
 			return
 		}
 		if n.isLeaf() {
-			if !i.started && bytes.Compare(n.key, i.start) < 0 {
+			if !i.started && bytes.Compare(n.Key(), i.start) < 0 {
 				continue
 			}
-			if i.isPastEndAscend(n.key) {
+			if i.isPastEndAscend(n.Key()) {
 				i.valid = false
 				return
 			}
@@ -127,7 +127,7 @@ func (i *TreeIterator) stepAscend() {
 			return
 		}
 
-		if bytes.Compare(i.start, n.key) < 0 {
+		if bytes.Compare(i.start, n.Key()) < 0 {
 			left, err := n.getLeftNode(i.tree)
 			if err != nil {
 				i.err = err
@@ -141,8 +141,8 @@ func (i *TreeIterator) stepAscend() {
 		}
 
 	}
-	i.key = n.key
-	i.value = n.value
+	i.key = n.Key()
+	i.value = n.Value()
 }
 
 func (i *TreeIterator) stepDescend() {
@@ -155,7 +155,7 @@ func (i *TreeIterator) stepDescend() {
 		}
 		if n.isLeaf() {
 			if !i.started && i.end != nil {
-				res := bytes.Compare(i.end, n.key)
+				res := bytes.Compare(i.end, n.Key())
 				// if end is inclusive and the key is greater than end, skip
 				if i.inclusive && res < 0 {
 					continue
@@ -165,7 +165,7 @@ func (i *TreeIterator) stepDescend() {
 					continue
 				}
 			}
-			if i.isPastEndDescend(n.key) {
+			if i.isPastEndDescend(n.Key()) {
 				i.valid = false
 				return
 			}
@@ -178,7 +178,7 @@ func (i *TreeIterator) stepDescend() {
 			return
 		}
 
-		if i.end == nil || bytes.Compare(n.key, i.end) <= 0 {
+		if i.end == nil || bytes.Compare(n.Key(), i.end) <= 0 {
 			right, err := n.getRightNode(i.tree)
 			if err != nil {
 				i.err = err
@@ -191,8 +191,8 @@ func (i *TreeIterator) stepDescend() {
 			i.push(left)
 		}
 	}
-	i.key = n.key
-	i.value = n.value
+	i.key = n.Key()
+	i.value = n.Value()
 }
 
 func (i *TreeIterator) isPastEndAscend(key []byte) bool {

@@ -71,16 +71,25 @@ func (node *Node) String() string {
 		node.hash, node.nodeKey, node.leftNodeKey, node.rightNodeKey, node.size, node.subtreeHeight, node.poolId)
 }
 
+func (node *Node) checkValid() {
+	if node.poolId == 0 {
+		panic(fmt.Sprintf("attempt to use node (key: %s, nk: %s) after it was returned to pool or not properly initialized", node.key, node.nodeKey))
+	}
+}
+
 func (node *Node) isLeaf() bool {
+	node.checkValid()
 	return node.subtreeHeight == 0
 }
 
 func (node *Node) setLeft(leftNode *Node) {
+	node.checkValid()
 	node.leftNode = leftNode
 	node.leftNodeKey = leftNode.nodeKey
 }
 
 func (node *Node) setRight(rightNode *Node) {
+	node.checkValid()
 	node.rightNode = rightNode
 	node.rightNodeKey = rightNode.nodeKey
 }
@@ -103,6 +112,7 @@ func (node *Node) right(t *Tree) *Node {
 
 // getLeftNode will never be called on leaf nodes. all tree nodes have 2 children.
 func (node *Node) getLeftNode(t *Tree) (*Node, error) {
+	node.checkValid()
 	if node.isLeaf() {
 		return nil, errors.New("leaf node has no left node")
 	}
@@ -118,6 +128,7 @@ func (node *Node) getLeftNode(t *Tree) (*Node, error) {
 }
 
 func (node *Node) getRightNode(t *Tree) (*Node, error) {
+	node.checkValid()
 	if node.isLeaf() {
 		return nil, errors.New("leaf node has no right node")
 	}
@@ -406,6 +417,7 @@ var (
 // Computes the hash of the node without computing its descendants. Must be
 // called on nodes which have descendant node hashes already computed.
 func (node *Node) _hash() []byte {
+	node.checkValid()
 	if node.hash != nil {
 		return node.hash
 	}
@@ -837,4 +849,44 @@ func decodeNodeKey(bz []byte) (*NodeKey, int, error) {
 	key := NewNodeKey(int64(version), sequence)
 
 	return &key, end, nil
+}
+
+func (node *Node) Key() []byte {
+	node.checkValid()
+	return node.key
+}
+
+func (node *Node) Value() []byte {
+	node.checkValid()
+	return node.value
+}
+
+func (node *Node) SetValue(value []byte) {
+	node.checkValid()
+	node.value = value
+}
+
+func (node *Node) NodeKey() NodeKey {
+	node.checkValid()
+	return node.nodeKey
+}
+
+func (node *Node) SetNodeKey(nk NodeKey) {
+	node.checkValid()
+	node.nodeKey = nk
+}
+
+func (node *Node) Hash() []byte {
+	node.checkValid()
+	return node.hash
+}
+
+func (node *Node) SetHash(hash []byte) {
+	node.checkValid()
+	node.hash = hash
+}
+
+func (node *Node) SetKey(key []byte) {
+	node.checkValid()
+	node.key = key
 }

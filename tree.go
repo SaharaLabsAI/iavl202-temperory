@@ -241,17 +241,17 @@ func (tree *Tree) computeHash() []byte {
 	}
 
 	currentVersion := tree.version.Load()
-	if tree.hashedVersion == currentVersion && tree.root.hash != nil {
+	if tree.hashedVersion == currentVersion && tree.root.Hash() != nil {
 		if tree.modificationCount != 0 {
 			panic("unexpected tree modification, hash root twice")
 		}
-		return tree.root.hash
+		return tree.root.Hash()
 	}
 
 	tree.deepHash(tree.root, 0)
 	tree.hashedVersion = currentVersion
 	tree.modificationCount = 0
-	return tree.root.hash
+	return tree.root.Hash()
 }
 
 func (tree *Tree) deepHash(node *Node, depth int8) {
@@ -306,31 +306,15 @@ func (tree *Tree) deepHash(node *Node, depth int8) {
 		// If it's the first visit, process children
 		if !current.visited {
 			// Clear cached hash
-			current.node.hash = nil
+			current.node.SetHash(nil)
 
 			// Push back the current node with visited flag set
 			current.visited = true
 			stack = append(stack, current)
 
 			// Fetch both children at once to reduce function calls
-			leftNode := current.node.leftNode
-			rightNode := current.node.rightNode
-
-			// Only fetch from storage if needed
-			var err error
-			if leftNode == nil {
-				leftNode, err = current.node.getLeftNode(tree)
-				if err != nil {
-					panic(err) // Consistent with existing error handling
-				}
-			}
-
-			if rightNode == nil {
-				rightNode, err = current.node.getRightNode(tree)
-				if err != nil {
-					panic(err) // Consistent with existing error handling
-				}
-			}
+			leftNode := current.node.left(tree)
+			rightNode := current.node.right(tree)
 
 			// Push children to process first (post-order traversal)
 			// Add right then left, so left is processed first due to LIFO stack
@@ -525,7 +509,7 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 		node:    node,
 		key:     key,
 		value:   value,
-		goLeft:  bytes.Compare(key, node.key) < 0,
+		goLeft:  bytes.Compare(key, node.Key()) < 0,
 		visited: false,
 	})
 
@@ -549,12 +533,12 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 			// Pop the frame
 			stack = stack[:currentIndex]
 
-			switch bytes.Compare(currentFrame.key, currentNode.key) {
+			switch bytes.Compare(currentFrame.key, currentNode.Key()) {
 			case -1: // setKey < leafKey
 				tree.metrics.IncrCounter(2, metricsNamespace, "pool_get")
 				parent := tree.pool.Get()
 				parent.nodeKey = tree.nextNodeKey()
-				parent.key = currentNode.key
+				parent.key = currentNode.Key()
 				parent.subtreeHeight = 1
 				parent.size = 2
 				parent.dirty = true
@@ -597,15 +581,15 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 				wasDirty := currentNode.dirty
 				tree.mutateNode(currentNode)
 				if tree.isReplaying {
-					currentNode.hash = currentFrame.value
+					currentNode.SetHash(currentFrame.value)
 				} else {
 					if wasDirty {
 						tree.workingBytes -= currentNode.sizeBytes()
 					}
-					currentNode.value = currentFrame.value
+					currentNode.SetValue(currentFrame.value)
 					currentNode._hash()
 					if !tree.storeLeafValues {
-						currentNode.value = nil
+						currentNode.SetValue(nil)
 					}
 					tree.workingBytes += currentNode.sizeBytes()
 				}
@@ -643,7 +627,7 @@ func (tree *Tree) recursiveSet(node *Node, key []byte, value []byte) (
 					node:    childNode,
 					key:     currentFrame.key,
 					value:   currentFrame.value,
-					goLeft:  bytes.Compare(currentFrame.key, childNode.key) < 0,
+					goLeft:  bytes.Compare(currentFrame.key, childNode.Key()) < 0,
 					visited: false,
 				})
 			} else {
@@ -761,7 +745,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 		node:    node,
 		key:     key,
 		visited: false,
-		goLeft:  bytes.Compare(key, node.key) < 0,
+		goLeft:  bytes.Compare(key, node.Key()) < 0,
 	})
 
 	// Maps parent nodes to their processed children and results
@@ -791,7 +775,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 			var result resultInfo
 
 			// Check if this is the leaf we're looking for
-			if bytes.Equal(currentFrame.key, currentNode.key) {
+			if bytes.Equal(currentFrame.key, currentNode.Key()) {
 				// Found the node to remove
 				tree.addDelete(currentNode)
 				nodesToReturn[currentNode] = true
@@ -799,7 +783,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 				result = resultInfo{
 					node:       nil,
 					newKey:     nil,
-					value:      currentNode.value,
+					value:      currentNode.Value(),
 					wasRemoved: true,
 				}
 			} else {
@@ -846,7 +830,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 				node:    childNode,
 				key:     currentFrame.key,
 				visited: false,
-				goLeft:  bytes.Compare(currentFrame.key, childNode.key) < 0,
+				goLeft:  bytes.Compare(currentFrame.key, childNode.Key()) < 0,
 			})
 		} else {
 			// Pop the frame since we've processed its children
@@ -889,7 +873,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 					// Left node held value, was removed
 					// Collapse `node.rightNode` into `node`
 					rightNode := currentNode.right(tree)
-					resultKey = currentNode.key // Important: pass the current node's key up
+					resultKey = currentNode.Key() // Important: pass the current node's key up
 					nodesToReturn[currentNode] = true
 					resultNode = rightNode
 				} else {
@@ -928,7 +912,7 @@ func (tree *Tree) recursiveRemove(node *Node, key []byte) (newSelf *Node, newKey
 
 					// Update key if needed (this is crucial for correct hash calculation)
 					if childResult.newKey != nil {
-						currentNode.key = childResult.newKey
+						currentNode.SetKey(childResult.newKey)
 					}
 
 					// Update node's height and size
@@ -1015,7 +999,7 @@ func (tree *Tree) resetSequences() {
 func (tree *Tree) mutateNode(node *Node) {
 	// this seems to be true only in certain cases
 	// we should investigate if we can remove this check
-	alreadyMutatedForNextVersion := node.hash == nil && node.nodeKey.Version() == tree.version.Load()+1
+	alreadyMutatedForNextVersion := node.Hash() == nil && node.nodeKey.Version() == tree.version.Load()+1
 	if alreadyMutatedForNextVersion {
 		// This node has already been mutated for the next version, so we can skip
 		// This can happen when we have already processed this node during a recursive operation
@@ -1023,7 +1007,7 @@ func (tree *Tree) mutateNode(node *Node) {
 	}
 
 	// Always mark the hash as nil to ensure recomputation
-	node.hash = nil
+	node.SetHash(nil)
 
 	// Create a new nodeKey with the next version
 	if node.isLeaf() {
@@ -1040,7 +1024,7 @@ func (tree *Tree) mutateNode(node *Node) {
 }
 
 func (tree *Tree) addOrphan(node *Node) {
-	if node.hash == nil {
+	if node.Hash() == nil {
 		return
 	}
 	if !node.isLeaf() {
@@ -1057,7 +1041,7 @@ func (tree *Tree) addDelete(node *Node) {
 	}
 	del := &nodeDelete{
 		deleteKey: tree.nextLeafNodeKey(),
-		leafKey:   node.key,
+		leafKey:   node.Key(),
 	}
 	tree.deletes = append(tree.deletes, del)
 }
@@ -1092,6 +1076,8 @@ func (tree *Tree) returnNode(node *Node) {
 	if node == nil {
 		return
 	}
+
+	node.checkValid()
 
 	// Make sure node is not the tree's root before recycling
 	if node == tree.root {
@@ -1139,7 +1125,7 @@ func (tree *Tree) Hash() []byte {
 	if tree.root == nil {
 		return emptyHash
 	}
-	return tree.root.hash
+	return tree.root.Hash()
 }
 
 func (tree *Tree) Version() int64 {
@@ -1200,7 +1186,7 @@ func (tree *Tree) GetByIndex(index int64) (key []byte, value []byte, err error) 
 func (tree *Tree) getByIndex(node *Node, index int64) (key []byte, value []byte, err error) {
 	if node.isLeaf() {
 		if index == 0 {
-			return node.key, node.value, nil
+			return node.Key(), node.Value(), nil
 		}
 		return nil, nil, nil
 	}
@@ -1302,8 +1288,8 @@ func (tree *Tree) WorkingHash() []byte {
 		return emptyHash
 	}
 
-	if tree.root.hash != nil {
-		return tree.root.hash
+	if tree.root.Hash() != nil {
+		return tree.root.Hash()
 	}
 
 	tree.resetSequences()

@@ -1,6 +1,7 @@
 package iavl
 
 import (
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -39,6 +40,10 @@ func (np *NodePool) Get() *Node {
 }
 
 func (np *NodePool) Put(node *Node) {
+	if node.poolId == 0 {
+		panic(fmt.Sprintf("NodePool.Put: detected attempt to Put node with poolId 0 (key: %s). Possible double Put or invalid node.", node.key))
+	}
+
 	node.leftNodeKey = emptyNodeKey
 	node.rightNodeKey = emptyNodeKey
 	node.rightNode = nil
