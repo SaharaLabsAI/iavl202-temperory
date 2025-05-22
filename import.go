@@ -229,7 +229,7 @@ func (i *Importer) Commit() error {
 		i.tree.root = nil
 	case 1:
 		n := i.stack[0]
-		if n.SubTreeHeight() == 0 {
+		if n.isLeaf() {
 			n.SetNodeKey(NewNodeKey(n.Version(), i.nextLeafSequence(n.Version())))
 		} else {
 			n.SetNodeKey(NewNodeKey(n.Version(), i.nextNodeSequence(n.Version())))
@@ -314,5 +314,9 @@ func (i *Importer) nextLeafSequence(version int64) uint32 {
 
 func (i *Importer) nextNodeSequence(version int64) uint32 {
 	i.nodeSequences[version]++
+	if i.nodeSequences[version] >= leafSequenceStart {
+		panic("node sequence overflow")
+	}
+
 	return i.nodeSequences[version]
 }
