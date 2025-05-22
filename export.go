@@ -109,7 +109,15 @@ func (e *Exporter) postOrderNext(root *Node) {
 			// and will be processed in the next iteration.
 
 		case 2: // State 2: Process the node itself (both children have been handled)
-			e.out <- currentEntry.node
+			processedNode := currentEntry.node
+			e.out <- processedNode
+
+			// Explicitly nil out child pointers in the processedNode after it's been sent.
+			if processedNode != nil {
+				processedNode.leftNode = nil
+				processedNode.rightNode = nil
+			}
+
 			s = s[:len(s)-1]
 		}
 	}
@@ -172,12 +180,16 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 			fmt.Printf("progress exported nodes %d duration %d\n", e.count, time.Since(e.startAt).Milliseconds())
 		}
 
-		return &SnapshotNode{
+		snapNode := &SnapshotNode{
 			Key:     node.key,
 			Value:   node.value,
 			Version: node.nodeKey.Version(),
 			Height:  node.subtreeHeight,
-		}, nil
+		}
+
+		e.tree.sql.pool.Put(node)
+
+		return snapNode, nil
 	case err, ok := <-e.errCh:
 		if !ok {
 			// Error channel closed, check if out channel still has items
@@ -185,12 +197,16 @@ func (e *Exporter) Next() (*SnapshotNode, error) {
 			case node, ok := <-e.out:
 				if ok {
 					e.count++
-					return &SnapshotNode{
+
+					snapNode := &SnapshotNode{
 						Key:     node.key,
 						Value:   node.value,
 						Version: node.nodeKey.Version(),
 						Height:  node.subtreeHeight,
-					}, nil
+					}
+					e.tree.sql.pool.Put(node)
+
+					return snapNode, nil
 				}
 			default:
 			}
