@@ -385,8 +385,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 			return err
 		}
 	}
-	// Use OPEN_NOMUTEX because this connection run in sqlite writer dedicated go routine
-	sql.treeWrite, err = gosqlite.Open(sql.opts.treeConnectionString(UseOption), sql.opts.Mode|gosqlite.OPEN_NOMUTEX)
+	sql.treeWrite, err = gosqlite.Open(sql.opts.treeConnectionString(UseOption), sql.opts.Mode|gosqlite.OPEN_FULLMUTEX)
 	if err != nil {
 		return err
 	}
@@ -433,8 +432,7 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	// Use OPEN_NOMUTEX because this connection run in sqlite writer dedicated go routine
-	sql.leafWrite, err = gosqlite.Open(sql.opts.leafConnectionString(UseOption), sql.opts.Mode|gosqlite.OPEN_NOMUTEX)
+	sql.leafWrite, err = gosqlite.Open(sql.opts.leafConnectionString(UseOption), sql.opts.Mode|gosqlite.OPEN_FULLMUTEX)
 	if err != nil {
 		return err
 	}
