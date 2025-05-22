@@ -234,6 +234,25 @@ func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err
 	// if tree.immutable {
 	// 	return tree.IteratorAt(tree.version.Load(), start, end, inclusive)
 	// }
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
+	var root *Node
+	if tree.root != nil {
+		root = &Node{
+			subtreeHeight: tree.root.SubTreeHeight(),
+			nodeKey:       tree.root.NodeKey(),
+			size:          tree.root.size,
+			key:           tree.root.Key(),
+			hash:          tree.root.Hash(),
+			value:         tree.root.Value(),
+			leftNodeKey:   tree.root.leftNodeKey,
+			rightNodeKey:  tree.root.rightNodeKey,
+			leftNode:      tree.root.leftNode,
+			rightNode:     tree.root.rightNode,
+			source:        ManualNode,
+		}
+	}
 
 	itr = &TreeIterator{
 		tree:      tree,
@@ -242,7 +261,7 @@ func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err
 		ascending: true,
 		inclusive: inclusive,
 		valid:     true,
-		stack:     []*Node{tree.root},
+		stack:     []*Node{root},
 		metrics:   tree.metricsProxy,
 	}
 
@@ -257,6 +276,25 @@ func (tree *Tree) ReverseIterator(start, end []byte) (itr Iterator, err error) {
 	// if tree.immutable {
 	// 	return tree.ReverseIteratorAt(tree.version.Load(), start, end)
 	// }
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
+	var root *Node
+	if tree.root != nil {
+		root = &Node{
+			subtreeHeight: tree.root.SubTreeHeight(),
+			nodeKey:       tree.root.NodeKey(),
+			size:          tree.root.size,
+			key:           tree.root.Key(),
+			hash:          tree.root.Hash(),
+			value:         tree.root.Value(),
+			leftNodeKey:   tree.root.leftNodeKey,
+			rightNodeKey:  tree.root.rightNodeKey,
+			leftNode:      tree.root.leftNode,
+			rightNode:     tree.root.rightNode,
+			source:        ManualNode,
+		}
+	}
 
 	itr = &TreeIterator{
 		tree:      tree,
@@ -265,7 +303,7 @@ func (tree *Tree) ReverseIterator(start, end []byte) (itr Iterator, err error) {
 		ascending: false,
 		inclusive: false,
 		valid:     true,
-		stack:     []*Node{tree.root},
+		stack:     []*Node{root},
 		metrics:   tree.metricsProxy,
 	}
 

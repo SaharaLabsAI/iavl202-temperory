@@ -15,7 +15,7 @@ import (
 )
 
 var proofBufPool = &sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return new(bytes.Buffer)
 	},
 }
@@ -36,6 +36,10 @@ func (tree *Tree) getProof(key []byte) (proof *ics23.CommitmentProof, err error)
 	if len(key) == 0 {
 		return nil, errors.New("cannot get proof for empty key")
 	}
+	if !tree.immutable {
+		return nil, errors.New("expected tree to be immutable")
+	}
+
 	exists, err := tree.Has(key)
 	if err != nil {
 		return nil, err

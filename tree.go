@@ -1310,11 +1310,6 @@ func (tree *Tree) WorkingHash() []byte {
 }
 
 func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
-	root, err := tree.sql.LoadRoot(version)
-	if err != nil {
-		return nil, err
-	}
-
 	// We can discard whole pool after usage
 	pool := NewNodePool()
 
@@ -1328,8 +1323,6 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 	}
 
 	imTree := &Tree{
-		root:            root,
-		immutable:       true,
 		sql:             sql,
 		sqlWriter:       nil,
 		writerCancel:    nil,
@@ -1345,7 +1338,11 @@ func (tree *Tree) GetImmutable(version int64) (*Tree, error) {
 		deleted:         make(map[string]bool),
 	}
 
-	imTree.version.Store(version)
+	if err := imTree.LoadVersion(version); err != nil {
+		return nil, err
+	}
+
+	imTree.immutable = true
 
 	return imTree, nil
 }
