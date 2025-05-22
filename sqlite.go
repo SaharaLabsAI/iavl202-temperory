@@ -29,7 +29,8 @@ const defaultWriteCacheSize = -256 * 1024 // 256M
 // journal mode is database wide, only need to set once on write connections
 const defaultJournalMode = "WAL"
 
-const openReadOnlyMode = gosqlite.OPEN_READONLY
+// We cannot guarantee that read connection are not shared between different go routine
+const openReadOnlyMode = gosqlite.OPEN_READONLY | gosqlite.OPEN_FULLMUTEX
 
 type ConnectionType int
 
@@ -114,6 +115,7 @@ func defaultSqliteDbOptions(opts SqliteDbOptions) SqliteDbOptions {
 	if opts.Path == "" {
 		opts.Path = defaultSQLitePath
 	}
+	// NOTE: mutex mode is set on open func call not here
 	if opts.Mode == 0 {
 		opts.Mode = gosqlite.OPEN_READWRITE | gosqlite.OPEN_CREATE
 	}
@@ -382,7 +384,8 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 			return err
 		}
 	}
-	sql.treeWrite, err = gosqlite.Open(sql.opts.treeConnectionString(UseOption), sql.opts.Mode)
+	// Use OPEN_NOMUTEX because this connection run in sqlite writer dedicated go routine
+	sql.treeWrite, err = gosqlite.Open(sql.opts.treeConnectionString(UseOption), sql.opts.Mode|gosqlite.OPEN_NOMUTEX)
 	if err != nil {
 		return err
 	}
@@ -429,7 +432,8 @@ func (sql *SqliteDb) resetWriteConn() (err error) {
 		return err
 	}
 
-	sql.leafWrite, err = gosqlite.Open(sql.opts.leafConnectionString(UseOption), sql.opts.Mode)
+	// Use OPEN_NOMUTEX because this connection run in sqlite writer dedicated go routine
+	sql.leafWrite, err = gosqlite.Open(sql.opts.leafConnectionString(UseOption), sql.opts.Mode|gosqlite.OPEN_NOMUTEX)
 	if err != nil {
 		return err
 	}
