@@ -217,7 +217,10 @@ func (i *TreeIterator) Key() (key []byte) {
 }
 
 func (i *TreeIterator) Value() (value []byte) {
-	return i.value
+	v := make([]byte, len(i.value))
+	copy(v, i.value)
+
+	return v
 }
 
 func (i *TreeIterator) Error() error {
@@ -230,44 +233,87 @@ func (i *TreeIterator) Close() error {
 	return i.err
 }
 
-func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err error) {
-	// if tree.immutable {
-	// 	return tree.IteratorAt(tree.version.Load(), start, end, inclusive)
-	// }
-	tree.rw.RLock()
-	defer tree.rw.RUnlock()
+func newIterTree(tree *Tree) *Tree {
+	pool := NewNodePool()
 
-	var root *Node
+	sql := &SqliteDb{
+		opts:        tree.sql.opts,
+		pool:        pool,
+		readPool:    tree.sql.readPool,
+		metrics:     tree.sql.metrics,
+		logger:      tree.sql.logger,
+		useReadPool: true,
+	}
+
+	itTree := &Tree{
+		sql:             sql,
+		sqlWriter:       nil,
+		writerCancel:    nil,
+		pool:            sql.pool,
+		metrics:         tree.metrics,
+		maxWorkingSize:  tree.maxWorkingSize,
+		storeLeafValues: tree.storeLeafValues,
+		heightFilter:    tree.heightFilter,
+		metricsProxy:    tree.metricsProxy,
+		leafSequence:    leafSequenceStart,
+		hashedVersion:   tree.version.Load(),
+		cache:           make(map[string][]byte),
+		deleted:         make(map[string]bool),
+		immutable:       true,
+	}
+
 	if tree.root != nil {
-		root = &Node{
+		key := make([]byte, len(tree.root.key))
+		copy(key, tree.root.key)
+
+		value := make([]byte, len(tree.root.value))
+		copy(key, tree.root.value)
+
+		root := &Node{
 			subtreeHeight: tree.root.SubTreeHeight(),
 			nodeKey:       tree.root.NodeKey(),
 			size:          tree.root.size,
-			key:           tree.root.Key(),
+			key:           key,
 			hash:          tree.root.Hash(),
-			value:         tree.root.Value(),
+			value:         value,
 			leftNodeKey:   tree.root.leftNodeKey,
 			rightNodeKey:  tree.root.rightNodeKey,
 			leftNode:      tree.root.leftNode,
 			rightNode:     tree.root.rightNode,
 			source:        ManualNode,
 		}
+
+		itTree.root = root
 	}
 
+	return itTree
+}
+
+func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err error) {
+	// if tree.immutable {
+	// 	return tree.IteratorAt(tree.version.Load(), start, end, inclusive)
+	// }
+
+	tree.rw.RLock()
+	defer tree.rw.RUnlock()
+
+	itTree := newIterTree(tree)
+
 	itr = &TreeIterator{
-		tree:      tree,
+		tree:      itTree,
 		start:     start,
 		end:       end,
 		ascending: true,
 		inclusive: inclusive,
 		valid:     true,
-		stack:     []*Node{root},
+		stack:     []*Node{itTree.root},
 		metrics:   tree.metricsProxy,
 	}
 
 	if tree.metricsProxy != nil {
 		tree.metricsProxy.IncrCounter(1, "iavl2", "iterator", "open")
 	}
+
 	itr.Next()
 	return itr, err
 }
@@ -276,40 +322,27 @@ func (tree *Tree) ReverseIterator(start, end []byte) (itr Iterator, err error) {
 	// if tree.immutable {
 	// 	return tree.ReverseIteratorAt(tree.version.Load(), start, end)
 	// }
+
 	tree.rw.RLock()
 	defer tree.rw.RUnlock()
 
-	var root *Node
-	if tree.root != nil {
-		root = &Node{
-			subtreeHeight: tree.root.SubTreeHeight(),
-			nodeKey:       tree.root.NodeKey(),
-			size:          tree.root.size,
-			key:           tree.root.Key(),
-			hash:          tree.root.Hash(),
-			value:         tree.root.Value(),
-			leftNodeKey:   tree.root.leftNodeKey,
-			rightNodeKey:  tree.root.rightNodeKey,
-			leftNode:      tree.root.leftNode,
-			rightNode:     tree.root.rightNode,
-			source:        ManualNode,
-		}
-	}
+	itTree := newIterTree(tree)
 
 	itr = &TreeIterator{
-		tree:      tree,
+		tree:      itTree,
 		start:     start,
 		end:       end,
 		ascending: false,
 		inclusive: false,
 		valid:     true,
-		stack:     []*Node{root},
+		stack:     []*Node{itTree.root},
 		metrics:   tree.metricsProxy,
 	}
 
 	if tree.metricsProxy != nil {
 		tree.metricsProxy.IncrCounter(1, "iavl2", "iterator", "open")
 	}
+
 	itr.Next()
 	return itr, nil
 }
