@@ -94,7 +94,9 @@ func TestTreeSanity(t *testing.T) {
 			name: "sqlite",
 			treeFn: func() *Tree {
 				pool := NewNodePool()
-				sql, err := NewInMemorySqliteDb(pool)
+				dbPath := t.TempDir()
+				sql, err := NewSqliteDb(pool, SqliteDbOptions{Path: dbPath})
+				// sql, err := NewInMemorySqliteDb(pool)
 				require.NoError(t, err)
 				return NewTree(sql, pool, DefaultTreeOptions())
 			},
