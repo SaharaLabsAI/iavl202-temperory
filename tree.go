@@ -34,6 +34,12 @@ type nodeDelete struct {
 	leafKey []byte
 }
 
+type nodeLoadTask struct {
+	parentNode *Node
+	isLeft     bool // true for left child, false for right child
+	nodeKey    NodeKey
+}
+
 type Tree struct {
 	version      atomic.Int64
 	root         *Node
@@ -313,13 +319,13 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 
 	// Maximum number of worker goroutines to use
 	const maxWorkers = 8
+	const maxDBConnections = 4
 
 	// Initialize shared data structures with appropriate capacity
 	tree.branches = make([]*Node, 0, 1024)
 	tree.leaves = make([]*Node, 0, 1024)
 
-	// First pass: collect nodes with a sequential traversal
-	// This ensures we have all the nodes loaded in memory in the right order
+	// First pass: collect nodes and identify loading requirements
 	type nodeWithDepth struct {
 		node  *Node
 		depth int8
@@ -329,11 +335,11 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 	allBranches := make([]*Node, 0, 1024)
 	allLeaves := make([]*Node, 0, 1024)
 
+	var nodesToLoad []nodeLoadTask
 	var toProcess = []nodeWithDepth{{node: node, depth: depth}}
 	nextTreeVersion := tree.version.Load() + 1
 
-	// Use a simple breadth-first traversal to collect all nodes first
-	// This avoids stack overflows with very deep trees
+	// Phase 1: Collect nodes and identify loading requirements
 	for len(toProcess) > 0 {
 		// Pop the first node
 		current := toProcess[0]
@@ -350,24 +356,62 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 			continue
 		}
 
-		// Handle branch nodes - get both children first
-		if current.node.leftNode == nil {
-			leftNode, err := current.node.getLeftNode(tree)
-			if err != nil {
-				panic(fmt.Sprintf("Error getting left node: %v", err))
-			}
-			current.node.leftNode = leftNode
+		// Handle branch nodes - check if children need loading
+		if current.node.leftNode == nil && !current.node.leftNodeKey.IsEmpty() {
+			nodesToLoad = append(nodesToLoad, nodeLoadTask{
+				parentNode: current.node,
+				isLeft:     true,
+				nodeKey:    current.node.leftNodeKey,
+			})
 		}
 
-		if current.node.rightNode == nil {
-			rightNode, err := current.node.getRightNode(tree)
-			if err != nil {
-				panic(fmt.Sprintf("Error getting right node: %v", err))
-			}
-			current.node.rightNode = rightNode
+		if current.node.rightNode == nil && !current.node.rightNodeKey.IsEmpty() {
+			nodesToLoad = append(nodesToLoad, nodeLoadTask{
+				parentNode: current.node,
+				isLeft:     false,
+				nodeKey:    current.node.rightNodeKey,
+			})
 		}
 
-		// Add children to process queue
+		// Add this branch node to our collection
+		allBranches = append(allBranches, current.node)
+	}
+
+	// Phase 2: Parallel node loading using multiple DB connections
+	if len(nodesToLoad) > 0 {
+		// Create multiple database connections for parallel loading
+		connPool := make([]*SqliteReadConn, maxDBConnections)
+		for i := 0; i < maxDBConnections; i++ {
+			conn, err := tree.newHashConnection()
+			if err != nil {
+				// Fallback to sequential loading if connection creation fails
+				tree.loadNodesSequentially(nodesToLoad)
+				break
+			}
+			connPool[i] = conn
+			defer conn.Close()
+		}
+
+		if len(connPool) > 0 && connPool[0] != nil {
+			tree.loadNodesParallel(nodesToLoad, connPool)
+		}
+	}
+
+	// Phase 3: Continue tree traversal now that nodes are loaded
+	toProcess = []nodeWithDepth{{node: node, depth: depth}}
+	for len(toProcess) > 0 {
+		current := toProcess[0]
+		toProcess = toProcess[1:]
+
+		if current.node.nodeKey.Version() != nextTreeVersion && !current.node.dirty && len(current.node.hash) > 0 {
+			continue
+		}
+
+		if current.node.isLeaf() {
+			continue // Already added to allLeaves
+		}
+
+		// Add children to process queue (they should be loaded now)
 		if current.node.leftNode != nil {
 			toProcess = append(toProcess, nodeWithDepth{
 				node:  current.node.leftNode,
@@ -381,12 +425,9 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 				depth: current.depth + 1,
 			})
 		}
-
-		// Add this branch node to our collection
-		allBranches = append(allBranches, current.node)
 	}
 
-	// 1. STEP 1: MAP - Process leaf nodes in parallel (they have no dependencies)
+	// Phase 4: MAP - Process leaf nodes in parallel (they have no dependencies)
 	leafChan := make(chan *Node, len(allLeaves))
 	for _, leaf := range allLeaves {
 		leafChan <- leaf
@@ -405,14 +446,8 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 	}
 	leafWg.Wait()
 
-	// 2. STEP 2: MAP-REDUCE - Process branch nodes in batches by height
+	// Phase 5: MAP-REDUCE - Process branch nodes in batches by height
 	// Sort branch nodes by height (ascending), so we process lowest height first
-	// This ensures dependencies are satisfied before a node is processed
-	type nodeByHeight struct {
-		node   *Node
-		height int8
-	}
-
 	nodesByHeight := make(map[int8][]*Node)
 	var heights []int8
 
@@ -467,7 +502,7 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 	tree.branches = allBranches
 	tree.leaves = allLeaves
 
-	// 3. STEP 3: Post-processing - Apply height filter and eviction
+	// Phase 6: Post-processing - Apply height filter and eviction
 	nodesToEvict := make(map[*Node]bool)
 	nodesToReturn := make(map[*Node]bool)
 
@@ -509,7 +544,100 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 	}
 }
 
-// Original deepHash function remains for compatibility
+// loadNodesParallel loads nodes in parallel using multiple database connections
+func (tree *Tree) loadNodesParallel(tasks []nodeLoadTask, connPool []*SqliteReadConn) {
+	if len(tasks) == 0 {
+		return
+	}
+
+	type loadResult struct {
+		task *nodeLoadTask
+		node *Node
+		err  error
+	}
+
+	taskChan := make(chan *nodeLoadTask, len(tasks))
+	resultChan := make(chan loadResult, len(tasks))
+
+	// Send all tasks to channel
+	for i := range tasks {
+		taskChan <- &tasks[i]
+	}
+	close(taskChan)
+
+	// Start worker goroutines
+	var wg sync.WaitGroup
+	maxWorkers := min(len(connPool), len(tasks))
+
+	for i := 0; i < maxWorkers; i++ {
+		wg.Add(1)
+		go func(connIdx int) {
+			defer wg.Done()
+			conn := connPool[connIdx]
+
+			for task := range taskChan {
+				var loadedNode *Node
+				var err error
+
+				// Load node from database using the dedicated connection
+				if isLeafSeq(task.nodeKey.Sequence()) {
+					loadedNode, err = conn.getLeaf(tree.pool, task.nodeKey)
+				} else {
+					loadedNode, err = conn.getNode(tree.pool, task.nodeKey)
+				}
+
+				resultChan <- loadResult{
+					task: task,
+					node: loadedNode,
+					err:  err,
+				}
+			}
+		}(i)
+	}
+
+	// Collect results
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Process results and update parent nodes
+	for result := range resultChan {
+		if result.err != nil {
+			panic(fmt.Sprintf("Error loading node %s: %v", result.task.nodeKey, result.err))
+		}
+
+		if result.node == nil {
+			panic(fmt.Sprintf("Node not found: %s", result.task.nodeKey))
+		}
+
+		// Update parent node with loaded child
+		if result.task.isLeft {
+			result.task.parentNode.leftNode = result.node
+		} else {
+			result.task.parentNode.rightNode = result.node
+		}
+	}
+}
+
+// loadNodesSequentially is a fallback method for sequential loading
+func (tree *Tree) loadNodesSequentially(tasks []nodeLoadTask) {
+	for _, task := range tasks {
+		var err error
+
+		if task.isLeft {
+			_, err = task.parentNode.getLeftNode(tree)
+		} else {
+			_, err = task.parentNode.getRightNode(tree)
+		}
+
+		if err != nil {
+			panic(fmt.Sprintf("Error loading node sequentially: %v", err))
+		}
+	}
+}
+
+// Original deepHash function kept for reference
 func (tree *Tree) deepHash(node *Node, depth int8) {
 	type nodeWithDepth struct {
 		node    *Node
