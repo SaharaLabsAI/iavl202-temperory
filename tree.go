@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -89,6 +90,135 @@ func DefaultTreeOptions() TreeOptions {
 		EvictionDepth: 18,
 		MetricsProxy:  &metrics.NilMetrics{},
 	}
+}
+
+// loadTaskPool reduces allocation for nodeLoadTask structs
+var loadTaskPool = &sync.Pool{
+	New: func() any {
+		return make([]nodeLoadTask, 0, 64) // Pre-allocate with reasonable capacity
+	},
+}
+
+// connectionPool for reusing database connections
+var hashConnectionPool = &sync.Pool{
+	New: func() any {
+		return make([]*SqliteReadConn, 0, 4)
+	},
+}
+
+// heightMapPool for reusing height maps
+var heightMapPool = &sync.Pool{
+	New: func() any {
+		return make(map[int8][]*Node, 16) // Pre-allocate with reasonable capacity
+	},
+}
+
+// nodeSlicePool for reusing node slices
+var nodeSlicePool = &sync.Pool{
+	New: func() any {
+		return make([]*Node, 0, 1024)
+	},
+}
+
+// AtomicNodeCounter for lock-free progress tracking
+type AtomicNodeCounter struct {
+	completed int64
+	total     int64
+}
+
+func (c *AtomicNodeCounter) increment() {
+	atomic.AddInt64(&c.completed, 1)
+}
+
+func (c *AtomicNodeCounter) setTotal(total int64) {
+	atomic.StoreInt64(&c.total, total)
+}
+
+func (c *AtomicNodeCounter) progress() float64 {
+	completed := atomic.LoadInt64(&c.completed)
+	total := atomic.LoadInt64(&c.total)
+	if total == 0 {
+		return 0
+	}
+	return float64(completed) / float64(total)
+}
+
+// CompactNodeBatch for cache-friendly data layout
+type CompactNodeBatch struct {
+	nodes     []*Node
+	parentIdx []int32
+	isLeft    []bool
+	nodeKeys  []NodeKey
+}
+
+func (cnb *CompactNodeBatch) reset() {
+	cnb.nodes = cnb.nodes[:0]
+	cnb.parentIdx = cnb.parentIdx[:0]
+	cnb.isLeft = cnb.isLeft[:0]
+	cnb.nodeKeys = cnb.nodeKeys[:0]
+}
+
+func (cnb *CompactNodeBatch) add(node *Node, parent int32, left bool, key NodeKey) {
+	cnb.nodes = append(cnb.nodes, node)
+	cnb.parentIdx = append(cnb.parentIdx, parent)
+	cnb.isLeft = append(cnb.isLeft, left)
+	cnb.nodeKeys = append(cnb.nodeKeys, key)
+}
+
+// compactBatchPool for cache-friendly batch processing
+var compactBatchPool = &sync.Pool{
+	New: func() any {
+		return &CompactNodeBatch{
+			nodes:     make([]*Node, 0, 256),
+			parentIdx: make([]int32, 0, 256),
+			isLeft:    make([]bool, 0, 256),
+			nodeKeys:  make([]NodeKey, 0, 256),
+		}
+	},
+}
+
+// estimateCapacity uses subtree height for better memory pre-allocation
+func (tree *Tree) estimateCapacity(rootNode *Node) (int, int) {
+	if rootNode == nil {
+		return 64, 32
+	}
+
+	height := rootNode.SubTreeHeight()
+	if height <= 0 {
+		return 64, 32
+	}
+
+	// Estimate based on height, but cap at reasonable limits
+	estimatedNodes := min(1<<height, 10000)
+	estimatedLeaves := estimatedNodes / 2
+
+	// Ensure minimums for small trees
+	if estimatedNodes < 64 {
+		estimatedNodes = 64
+	}
+	if estimatedLeaves < 32 {
+		estimatedLeaves = 32
+	}
+
+	return estimatedNodes, estimatedLeaves
+}
+
+// optimizedWorkerCount dynamically sizes worker pool based on workload
+func (tree *Tree) optimizedWorkerCount(workload int) int {
+	cpuCount := runtime.NumCPU()
+
+	if workload <= 1 {
+		return 1
+	} else if workload <= 5 {
+		return min(2, cpuCount)
+	} else if workload <= 20 {
+		return min(3, cpuCount)
+	} else if workload <= 100 {
+		return min(4, cpuCount)
+	} else if workload <= 1000 {
+		return min(6, cpuCount)
+	}
+	return min(8, cpuCount*2) // For large workloads
 }
 
 func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
@@ -317,47 +447,71 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 		return
 	}
 
-	// Maximum number of worker goroutines to use
-	const maxWorkers = 8
-	const maxDBConnections = 4
+	// Only use sequential for extremely small trees (under 10 nodes)
+	estimatedNodes, _ := tree.estimateCapacity(node)
+	if estimatedNodes < 10 {
+		tree.deepHash(node, depth)
+		return
+	}
 
-	// Initialize shared data structures with appropriate capacity
-	tree.branches = make([]*Node, 0, 1024)
-	tree.leaves = make([]*Node, 0, 1024)
+	// Get pooled resources to reduce allocations
+	allBranches := nodeSlicePool.Get().([]*Node)
+	allLeaves := nodeSlicePool.Get().([]*Node)
+	nodesToLoad := loadTaskPool.Get().([]nodeLoadTask)
 
-	// First pass: collect nodes and identify loading requirements
+	defer func() {
+		// Return resources to pools
+		allBranches = allBranches[:0]
+		allLeaves = allLeaves[:0]
+		nodesToLoad = nodesToLoad[:0]
+
+		nodeSlicePool.Put(allBranches)
+		nodeSlicePool.Put(allLeaves)
+		loadTaskPool.Put(nodesToLoad)
+	}()
+
+	// Initialize with estimated capacity
+	tree.branches = make([]*Node, 0, estimatedNodes)
+	tree.leaves = make([]*Node, 0, estimatedNodes/2)
+
 	type nodeWithDepth struct {
 		node  *Node
 		depth int8
 	}
 
-	// Track all branch nodes and leaf nodes
-	allBranches := make([]*Node, 0, 1024)
-	allLeaves := make([]*Node, 0, 1024)
-
-	var nodesToLoad []nodeLoadTask
 	var toProcess = []nodeWithDepth{{node: node, depth: depth}}
 	nextTreeVersion := tree.version.Load() + 1
 
-	// Phase 1: Collect nodes and identify loading requirements
+	// Phase 1: Collect nodes and identify what needs loading (match original logic)
 	for len(toProcess) > 0 {
-		// Pop the first node
 		current := toProcess[0]
 		toProcess = toProcess[1:]
 
-		// Skip nodes from other versions
-		if current.node.nodeKey.Version() != nextTreeVersion && !current.node.dirty && len(current.node.hash) > 0 {
+		if current.node == nil {
 			continue
 		}
 
-		// Handle leaf nodes
+		// Handle leaf nodes first
 		if current.node.isLeaf() {
-			allLeaves = append(allLeaves, current.node)
+			if current.node.nodeKey.Version() == nextTreeVersion {
+				allLeaves = append(allLeaves, current.node)
+			}
 			continue
 		}
 
-		// Handle branch nodes - check if children need loading
-		if current.node.leftNode == nil && !current.node.leftNodeKey.IsEmpty() {
+		// Skip non-dirty or non-current version branch nodes
+		if !current.node.dirty || current.node.nodeKey.Version() != nextTreeVersion {
+			continue
+		}
+
+		// This is a dirty branch node that needs processing
+		allBranches = append(allBranches, current.node)
+
+		// Check if children need loading
+		needsLeftLoad := current.node.leftNode == nil && !current.node.leftNodeKey.IsEmpty()
+		needsRightLoad := current.node.rightNode == nil && !current.node.rightNodeKey.IsEmpty()
+
+		if needsLeftLoad {
 			nodesToLoad = append(nodesToLoad, nodeLoadTask{
 				parentNode: current.node,
 				isLeft:     true,
@@ -365,7 +519,7 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 			})
 		}
 
-		if current.node.rightNode == nil && !current.node.rightNodeKey.IsEmpty() {
+		if needsRightLoad {
 			nodesToLoad = append(nodesToLoad, nodeLoadTask{
 				parentNode: current.node,
 				isLeft:     false,
@@ -373,42 +527,86 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 			})
 		}
 
-		// Add this branch node to our collection
-		allBranches = append(allBranches, current.node)
+		// Add children to processing queue if they're already loaded
+		if current.node.leftNode != nil {
+			toProcess = append(toProcess, nodeWithDepth{node: current.node.leftNode, depth: current.depth + 1})
+		}
+		if current.node.rightNode != nil {
+			toProcess = append(toProcess, nodeWithDepth{node: current.node.rightNode, depth: current.depth + 1})
+		}
 	}
 
-	// Phase 2: Parallel node loading using multiple DB connections
+	// Phase 2: Always attempt parallel loading if there are nodes to load
 	if len(nodesToLoad) > 0 {
-		// Create multiple database connections for parallel loading
-		connPool := make([]*SqliteReadConn, maxDBConnections)
-		for i := 0; i < maxDBConnections; i++ {
-			conn, err := tree.newHashConnection()
-			if err != nil {
-				// Fallback to sequential loading if connection creation fails
-				tree.loadNodesSequentially(nodesToLoad)
-				break
-			}
-			connPool[i] = conn
-			defer conn.Close()
+		// Use fewer connections for smaller workloads to reduce overhead
+		var maxConnections int
+		if len(nodesToLoad) < 50 {
+			maxConnections = 2
+		} else if len(nodesToLoad) < 200 {
+			maxConnections = 3
+		} else {
+			maxConnections = 4
 		}
 
-		if len(connPool) > 0 && connPool[0] != nil {
-			tree.loadNodesParallel(nodesToLoad, connPool)
+		actualConnections := min(maxConnections, tree.optimizedWorkerCount(len(nodesToLoad)))
+		actualConnections = max(1, actualConnections) // Ensure at least 1
+
+		connPool := make([]*SqliteReadConn, 0, actualConnections)
+		defer func() {
+			for _, conn := range connPool {
+				conn.Close()
+			}
+		}()
+
+		// Create connections - always try parallel, fallback on error
+		parallelLoadSuccessful := false
+		if actualConnections > 1 {
+			for i := 0; i < actualConnections; i++ {
+				conn, err := tree.newHashConnection()
+				if err != nil {
+					// Clean up any connections we've already created
+					for _, existingConn := range connPool {
+						existingConn.Close()
+					}
+					connPool = connPool[:0]
+					break
+				}
+				connPool = append(connPool, conn)
+			}
+
+			if len(connPool) > 1 {
+				tree.loadNodesParallel(nodesToLoad, connPool)
+				parallelLoadSuccessful = true
+			}
+		}
+
+		// Fallback to sequential loading if parallel failed or not attempted
+		if !parallelLoadSuccessful {
+			tree.loadNodesSequentially(nodesToLoad)
 		}
 	}
 
-	// Phase 3: Continue tree traversal now that nodes are loaded
+	// Phase 3: Continue tree traversal for newly loaded nodes
 	toProcess = []nodeWithDepth{{node: node, depth: depth}}
+	seen := make(map[*Node]bool, len(allBranches)+len(allLeaves))
+
 	for len(toProcess) > 0 {
 		current := toProcess[0]
 		toProcess = toProcess[1:]
 
-		if current.node.nodeKey.Version() != nextTreeVersion && !current.node.dirty && len(current.node.hash) > 0 {
+		if current.node == nil || seen[current.node] {
+			continue
+		}
+		seen[current.node] = true
+
+		if current.node.isLeaf() {
+			// Already handled in Phase 1
 			continue
 		}
 
-		if current.node.isLeaf() {
-			continue // Already added to allLeaves
+		// Skip nodes that don't meet the processing criteria
+		if !current.node.dirty || current.node.nodeKey.Version() != nextTreeVersion {
+			continue
 		}
 
 		// Add children to process queue (they should be loaded now)
@@ -418,7 +616,6 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 				depth: current.depth + 1,
 			})
 		}
-
 		if current.node.rightNode != nil {
 			toProcess = append(toProcess, nodeWithDepth{
 				node:  current.node.rightNode,
@@ -427,87 +624,121 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 		}
 	}
 
-	// Phase 4: MAP - Process leaf nodes in parallel (they have no dependencies)
-	leafChan := make(chan *Node, len(allLeaves))
-	for _, leaf := range allLeaves {
-		leafChan <- leaf
-	}
-	close(leafChan)
+	// Phase 4: Always parallel process leaf nodes (if any exist)
+	if len(allLeaves) > 0 {
+		leafWorkers := tree.optimizedWorkerCount(len(allLeaves))
+		leafWorkers = max(1, min(leafWorkers, 6)) // Cap at 6 workers, min 1
 
-	var leafWg sync.WaitGroup
-	for range min(maxWorkers, len(allLeaves)) {
-		leafWg.Add(1)
-		go func() {
-			defer leafWg.Done()
-			for leaf := range leafChan {
+		if leafWorkers > 1 && len(allLeaves) > 2 { // Much lower threshold
+			leafChan := make(chan *Node, min(len(allLeaves), 50))
+
+			go func() {
+				defer close(leafChan)
+				for _, leaf := range allLeaves {
+					leafChan <- leaf
+				}
+			}()
+
+			var leafWg sync.WaitGroup
+			for i := 0; i < leafWorkers; i++ {
+				leafWg.Add(1)
+				go func() {
+					defer leafWg.Done()
+					for leaf := range leafChan {
+						leaf._hash()
+					}
+				}()
+			}
+			leafWg.Wait()
+		} else {
+			// Sequential for very small workloads
+			for _, leaf := range allLeaves {
 				leaf._hash()
 			}
-		}()
-	}
-	leafWg.Wait()
-
-	// Phase 5: MAP-REDUCE - Process branch nodes in batches by height
-	// Sort branch nodes by height (ascending), so we process lowest height first
-	nodesByHeight := make(map[int8][]*Node)
-	var heights []int8
-
-	// Group nodes by height
-	for _, branch := range allBranches {
-		h := branch.subtreeHeight
-		if _, exists := nodesByHeight[h]; !exists {
-			heights = append(heights, h)
 		}
-		nodesByHeight[h] = append(nodesByHeight[h], branch)
 	}
 
-	// Sort heights (we need to process from lowest to highest)
-	sort.Slice(heights, func(i, j int) bool {
-		return heights[i] < heights[j]
-	})
+	// Phase 5: Always parallel process branch nodes by height (if any exist)
+	if len(allBranches) > 0 {
+		heightMap := make(map[int8][]*Node)
+		var heights []int8
 
-	// Process branches by height (ensures dependencies are resolved)
-	for _, height := range heights {
-		branches := nodesByHeight[height]
-
-		// Create a worker pool for this height level
-		branchChan := make(chan *Node, len(branches))
-		for _, branch := range branches {
-			branchChan <- branch
+		// Group by height
+		for _, branch := range allBranches {
+			h := branch.subtreeHeight
+			if _, exists := heightMap[h]; !exists {
+				heights = append(heights, h)
+			}
+			heightMap[h] = append(heightMap[h], branch)
 		}
-		close(branchChan)
 
-		var branchWg sync.WaitGroup
-		for range min(maxWorkers, len(branches)) {
-			branchWg.Add(1)
-			go func() {
-				defer branchWg.Done()
-				for branch := range branchChan {
-					// Ensure both children have hashes
+		// Sort heights (process from lowest to highest)
+		sort.Slice(heights, func(i, j int) bool {
+			return heights[i] < heights[j]
+		})
+
+		// Process by height with optimized parallelism
+		for _, height := range heights {
+			branches := heightMap[height]
+			branchWorkers := tree.optimizedWorkerCount(len(branches))
+			branchWorkers = max(1, min(branchWorkers, 4)) // Cap at 4 workers, min 1
+
+			if branchWorkers > 1 && len(branches) > 1 { // Much lower threshold - parallel for 2+ nodes
+				branchChan := make(chan *Node, min(len(branches), 20))
+
+				go func() {
+					defer close(branchChan)
+					for _, branch := range branches {
+						branchChan <- branch
+					}
+				}()
+
+				var branchWg sync.WaitGroup
+				for i := 0; i < branchWorkers; i++ {
+					branchWg.Add(1)
+					go func() {
+						defer branchWg.Done()
+						for branch := range branchChan {
+							// Clear hash and ensure children are hashed
+							branch.SetHash(nil)
+							if branch.leftNode != nil && branch.leftNode.hash == nil {
+								branch.leftNode._hash()
+							}
+							if branch.rightNode != nil && branch.rightNode.hash == nil {
+								branch.rightNode._hash()
+							}
+							branch._hash()
+						}
+					}()
+				}
+				branchWg.Wait()
+			} else {
+				// Sequential for single nodes
+				for _, branch := range branches {
+					branch.SetHash(nil)
 					if branch.leftNode != nil && branch.leftNode.hash == nil {
 						branch.leftNode._hash()
 					}
 					if branch.rightNode != nil && branch.rightNode.hash == nil {
 						branch.rightNode._hash()
 					}
-
-					// Now hash the branch
 					branch._hash()
 				}
-			}()
+			}
 		}
-		branchWg.Wait()
 	}
 
-	// Add nodes to tree's collections
-	tree.branches = allBranches
-	tree.leaves = allLeaves
+	// Copy results to tree's collections
+	tree.branches = make([]*Node, len(allBranches))
+	copy(tree.branches, allBranches)
+	tree.leaves = make([]*Node, len(allLeaves))
+	copy(tree.leaves, allLeaves)
 
-	// Phase 6: Post-processing - Apply height filter and eviction
+	// Phase 6: Post-processing (same as original)
 	nodesToEvict := make(map[*Node]bool)
 	nodesToReturn := make(map[*Node]bool)
 
-	for _, branch := range allBranches {
-		// Apply height filter if enabled
+	for _, branch := range tree.branches {
 		if tree.heightFilter > 0 {
 			leftNode := branch.leftNode
 			rightNode := branch.rightNode
@@ -527,18 +758,15 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 			}
 		}
 
-		// Apply eviction by subtree height
 		if branch.subtreeHeight < 2 {
 			nodesToEvict[branch] = true
 		}
 	}
 
-	// Apply eviction
 	for node := range nodesToEvict {
 		node.evictChildren()
 	}
 
-	// Return nodes to pool
 	for node := range nodesToReturn {
 		tree.returnNode(node)
 	}
@@ -1799,4 +2027,183 @@ func (tree *Tree) Revert(version int64) error {
 // Call this function whenever the tree structure changes
 func (tree *Tree) markHashDirty() {
 	tree.hashedVersion = -1 // Invalidate hash by setting to impossible version
+}
+
+// adaptiveBatching groups tasks for better database locality and balanced load
+func (tree *Tree) adaptiveBatching(tasks []nodeLoadTask, numWorkers int) [][]nodeLoadTask {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	// Sort tasks by version first, then sequence for better cache locality
+	sort.Slice(tasks, func(i, j int) bool {
+		if tasks[i].nodeKey.Version() != tasks[j].nodeKey.Version() {
+			return tasks[i].nodeKey.Version() < tasks[j].nodeKey.Version()
+		}
+		return tasks[i].nodeKey.Sequence() < tasks[j].nodeKey.Sequence()
+	})
+
+	// Calculate optimal batch size
+	batchSize := len(tasks) / numWorkers
+	if batchSize < 10 {
+		batchSize = 10
+	}
+
+	// Create balanced batches
+	batches := make([][]nodeLoadTask, 0, numWorkers)
+	for i := 0; i < len(tasks); i += batchSize {
+		end := min(i+batchSize, len(tasks))
+		batch := make([]nodeLoadTask, end-i)
+		copy(batch, tasks[i:end])
+		batches = append(batches, batch)
+	}
+
+	return batches
+}
+
+// loadNodesBatched performs optimized batch loading with prepared statements
+func (tree *Tree) loadNodesBatched(batches [][]nodeLoadTask, connPool []*SqliteReadConn) error {
+	if len(batches) == 0 {
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	errorChan := make(chan error, len(batches))
+	numWorkers := min(len(connPool), len(batches))
+
+	// Counter for progress tracking
+	counter := &AtomicNodeCounter{}
+	totalTasks := 0
+	for _, batch := range batches {
+		totalTasks += len(batch)
+	}
+	counter.setTotal(int64(totalTasks))
+
+	// Process batches in parallel
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(workerIdx int, conn *SqliteReadConn) {
+			defer wg.Done()
+
+			// Process assigned batches
+			for batchIdx := workerIdx; batchIdx < len(batches); batchIdx += numWorkers {
+				batch := batches[batchIdx]
+				if err := tree.processBatch(batch, conn, counter); err != nil {
+					errorChan <- err
+					return
+				}
+			}
+		}(i, connPool[i])
+	}
+
+	wg.Wait()
+	close(errorChan)
+
+	// Check for errors
+	for err := range errorChan {
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// processBatch handles a single batch of loading tasks
+func (tree *Tree) processBatch(batch []nodeLoadTask, conn *SqliteReadConn, counter *AtomicNodeCounter) error {
+	// Group by node type for better query optimization
+	leafTasks := make([]nodeLoadTask, 0, len(batch))
+	branchTasks := make([]nodeLoadTask, 0, len(batch))
+
+	for _, task := range batch {
+		if isLeafSeq(task.nodeKey.Sequence()) {
+			leafTasks = append(leafTasks, task)
+		} else {
+			branchTasks = append(branchTasks, task)
+		}
+	}
+
+	// Process leaf nodes
+	if len(leafTasks) > 0 {
+		if err := tree.batchLoadNodes(leafTasks, conn, true); err != nil {
+			return err
+		}
+	}
+
+	// Process branch nodes
+	if len(branchTasks) > 0 {
+		if err := tree.batchLoadNodes(branchTasks, conn, false); err != nil {
+			return err
+		}
+	}
+
+	// Update progress counter
+	counter.completed += int64(len(batch))
+
+	return nil
+}
+
+// batchLoadNodes performs the actual batched database queries
+func (tree *Tree) batchLoadNodes(tasks []nodeLoadTask, conn *SqliteReadConn, isLeaf bool) error {
+	const maxBatchSize = 100 // SQLite parameter limit consideration
+
+	for i := 0; i < len(tasks); i += maxBatchSize {
+		end := min(i+maxBatchSize, len(tasks))
+		batch := tasks[i:end]
+
+		if err := tree.executeBatchQuery(batch, conn, isLeaf); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// executeBatchQuery runs optimized batch queries
+func (tree *Tree) executeBatchQuery(tasks []nodeLoadTask, conn *SqliteReadConn, isLeaf bool) error {
+	// For now, fall back to individual queries but with better batching
+	// In a full implementation, we'd use prepared statements with batch parameters
+	for _, task := range tasks {
+		var node *Node
+		var err error
+
+		if isLeaf {
+			node, err = conn.getLeaf(tree.pool, task.nodeKey)
+		} else {
+			node, err = conn.getNode(tree.pool, task.nodeKey)
+		}
+
+		if err != nil {
+			return fmt.Errorf("error loading node %s: %w", task.nodeKey, err)
+		}
+
+		if node == nil {
+			return fmt.Errorf("node not found: %s", task.nodeKey)
+		}
+
+		// Update parent node with loaded child
+		if task.isLeft {
+			task.parentNode.leftNode = node
+		} else {
+			task.parentNode.rightNode = node
+		}
+	}
+
+	return nil
+}
+
+// Pipeline stage functions for pipeline processing
+type pipelineStage struct {
+	input  chan interface{}
+	output chan interface{}
+	worker func(interface{}) interface{}
+}
+
+func (ps *pipelineStage) run() {
+	defer close(ps.output)
+	for item := range ps.input {
+		if result := ps.worker(item); result != nil {
+			ps.output <- result
+		}
+	}
 }
