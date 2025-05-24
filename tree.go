@@ -1292,8 +1292,6 @@ func (tree *Tree) WorkingHash() []byte {
 		return tree.root.Hash()
 	}
 
-	tree.resetSequences()
-
 	// TODO: fix query_trace_tx/query_trace_block panic (use after free)
 	// if err := tree.sql.closeHangingIterators(); err != nil {
 	// 	panic(err)
@@ -1303,8 +1301,6 @@ func (tree *Tree) WorkingHash() []byte {
 	defer tree.sql.readPool.UnsetSavingTree()
 
 	hash := tree.computeHash()
-
-	tree.resetSequences()
 
 	return hash
 }
