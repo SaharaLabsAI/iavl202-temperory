@@ -441,7 +441,7 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 		}
 
 		// Apply eviction by subtree height
-		if branch.subtreeHeight < 1 {
+		if branch.subtreeHeight < 2 {
 			nodesToEvict[branch] = true
 		}
 	}
