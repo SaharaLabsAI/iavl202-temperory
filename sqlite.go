@@ -89,6 +89,7 @@ type SqliteDb struct {
 
 	// Separate read conn configuration from main read, typical used by rpc query
 	readPool *SqliteReadonlyConnPool
+	hashPool []*SqliteReadConn
 
 	metrics metrics.Proxy
 	logger  Logger
@@ -281,6 +282,8 @@ func NewSqliteDb(pool *NodePool, opts SqliteDbOptions) (*SqliteDb, error) {
 	// if err = sql.runQuickCheck(); err != nil {
 	// 	return nil, err
 	// }
+
+	sql.hashPool = make([]*SqliteReadConn, 0)
 
 	sql.readPool, err = NewSqliteReadonlyConnPool(&opts, opts.MaxPoolSize)
 	if err != nil {
@@ -630,6 +633,83 @@ func (sql *SqliteDb) getReadConn() (*SqliteReadConn, error) {
 	return sql.read, err
 }
 
+func (sql *SqliteDb) newHashConnection() (*SqliteReadConn, error) {
+	conn, err := gosqlite.Open(sql.opts.treeConnectionString(ReadOnly), openReadOnlyMode)
+	if err != nil {
+		return nil, err
+	}
+
+	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS changelog;", sql.opts.leafConnectionString(ReadOnly)))
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	err = conn.Exec("PRAGMA automatic_index=OFF;")
+	if err != nil {
+		return nil, err
+	}
+
+	err = conn.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 0))
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	err = conn.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", 100))
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	err = conn.Exec("PRAGMA read_uncommitted=OFF;")
+	if err != nil {
+		return nil, err
+	}
+
+	err = conn.Exec("PRAGMA query_only=ON;")
+	if err != nil {
+		return nil, err
+	}
+
+	return &SqliteReadConn{
+		conn:         conn,
+		treeVersion:  0,
+		shards:       &VersionRange{},
+		shardQueries: make(map[int64]*gosqlite.Stmt),
+		opts:         &sql.opts,
+		inUse:        false,
+		logger:       sql.logger,
+	}, nil
+}
+
+func (sql *SqliteDb) getHashConn() (*SqliteReadConn, error) {
+	for _, conn := range sql.hashPool {
+		if conn.IsInUse() {
+			continue
+		}
+
+		conn.MarkInUse()
+		return conn, nil
+	}
+
+	conn, err := sql.newHashConnection()
+	if err != nil {
+		return nil, err
+	}
+
+	conn.MarkInUse()
+	sql.hashPool = append(sql.hashPool, conn)
+
+	return conn, nil
+}
+
+func (sql *SqliteDb) returnHashConns(conns []*SqliteReadConn) {
+	for _, conn := range conns {
+		conn.MarkIdle()
+	}
+}
+
 func (sql *SqliteDb) getLeaf(nodeKey NodeKey) (*Node, error) {
 	// Fallback to old method for backward compatibility
 	start := time.Now()
@@ -693,6 +773,14 @@ func (sql *SqliteDb) Close() error {
 	if sql.readPool != nil {
 		if err := sql.readPool.Close(); err != nil {
 			return err
+		}
+	}
+
+	if sql.hashPool != nil {
+		for _, conn := range sql.hashPool {
+			if err := conn.Close(); err != nil {
+				return err
+			}
 		}
 	}
 

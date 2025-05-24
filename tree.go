@@ -12,8 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/eatonphil/gosqlite"
-
 	"github.com/cosmos/iavl/v2/metrics"
 )
 
@@ -96,20 +94,6 @@ func DefaultTreeOptions() TreeOptions {
 var loadTaskPool = &sync.Pool{
 	New: func() any {
 		return make([]nodeLoadTask, 0, 64) // Pre-allocate with reasonable capacity
-	},
-}
-
-// connectionPool for reusing database connections
-var hashConnectionPool = &sync.Pool{
-	New: func() any {
-		return make([]*SqliteReadConn, 0, 4)
-	},
-}
-
-// heightMapPool for reusing height maps
-var heightMapPool = &sync.Pool{
-	New: func() any {
-		return make(map[int8][]*Node, 16) // Pre-allocate with reasonable capacity
 	},
 }
 
@@ -392,56 +376,6 @@ func (tree *Tree) computeHash() []byte {
 	return tree.root.Hash()
 }
 
-func (tree *Tree) newHashConnection() (*SqliteReadConn, error) {
-	conn, err := gosqlite.Open(tree.sql.opts.treeConnectionString(ReadOnly), openReadOnlyMode)
-	if err != nil {
-		return nil, err
-	}
-
-	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS changelog;", tree.sql.opts.leafConnectionString(ReadOnly)))
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-
-	err = conn.Exec("PRAGMA automatic_index=OFF;")
-	if err != nil {
-		return nil, err
-	}
-
-	err = conn.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 0))
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-
-	err = conn.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", 100))
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-
-	err = conn.Exec("PRAGMA read_uncommitted=OFF;")
-	if err != nil {
-		return nil, err
-	}
-
-	err = conn.Exec("PRAGMA query_only=ON;")
-	if err != nil {
-		return nil, err
-	}
-
-	return &SqliteReadConn{
-		conn:         conn,
-		treeVersion:  tree.version.Load(),
-		shards:       &VersionRange{},
-		shardQueries: make(map[int64]*gosqlite.Stmt),
-		opts:         &tree.sql.opts,
-		inUse:        false,
-		logger:       tree.sql.logger,
-	}, nil
-}
-
 func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 	if node == nil {
 		return
@@ -553,21 +487,16 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 
 		connPool := make([]*SqliteReadConn, 0, actualConnections)
 		defer func() {
-			for _, conn := range connPool {
-				conn.Close()
-			}
+			tree.sql.returnHashConns(connPool)
 		}()
 
 		// Create connections - always try parallel, fallback on error
 		parallelLoadSuccessful := false
 		if actualConnections > 1 {
 			for i := 0; i < actualConnections; i++ {
-				conn, err := tree.newHashConnection()
+				conn, err := tree.sql.getHashConn()
 				if err != nil {
-					// Clean up any connections we've already created
-					for _, existingConn := range connPool {
-						existingConn.Close()
-					}
+					tree.sql.returnHashConns(connPool)
 					connPool = connPool[:0]
 					break
 				}
@@ -2027,183 +1956,4 @@ func (tree *Tree) Revert(version int64) error {
 // Call this function whenever the tree structure changes
 func (tree *Tree) markHashDirty() {
 	tree.hashedVersion = -1 // Invalidate hash by setting to impossible version
-}
-
-// adaptiveBatching groups tasks for better database locality and balanced load
-func (tree *Tree) adaptiveBatching(tasks []nodeLoadTask, numWorkers int) [][]nodeLoadTask {
-	if len(tasks) == 0 {
-		return nil
-	}
-
-	// Sort tasks by version first, then sequence for better cache locality
-	sort.Slice(tasks, func(i, j int) bool {
-		if tasks[i].nodeKey.Version() != tasks[j].nodeKey.Version() {
-			return tasks[i].nodeKey.Version() < tasks[j].nodeKey.Version()
-		}
-		return tasks[i].nodeKey.Sequence() < tasks[j].nodeKey.Sequence()
-	})
-
-	// Calculate optimal batch size
-	batchSize := len(tasks) / numWorkers
-	if batchSize < 10 {
-		batchSize = 10
-	}
-
-	// Create balanced batches
-	batches := make([][]nodeLoadTask, 0, numWorkers)
-	for i := 0; i < len(tasks); i += batchSize {
-		end := min(i+batchSize, len(tasks))
-		batch := make([]nodeLoadTask, end-i)
-		copy(batch, tasks[i:end])
-		batches = append(batches, batch)
-	}
-
-	return batches
-}
-
-// loadNodesBatched performs optimized batch loading with prepared statements
-func (tree *Tree) loadNodesBatched(batches [][]nodeLoadTask, connPool []*SqliteReadConn) error {
-	if len(batches) == 0 {
-		return nil
-	}
-
-	var wg sync.WaitGroup
-	errorChan := make(chan error, len(batches))
-	numWorkers := min(len(connPool), len(batches))
-
-	// Counter for progress tracking
-	counter := &AtomicNodeCounter{}
-	totalTasks := 0
-	for _, batch := range batches {
-		totalTasks += len(batch)
-	}
-	counter.setTotal(int64(totalTasks))
-
-	// Process batches in parallel
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func(workerIdx int, conn *SqliteReadConn) {
-			defer wg.Done()
-
-			// Process assigned batches
-			for batchIdx := workerIdx; batchIdx < len(batches); batchIdx += numWorkers {
-				batch := batches[batchIdx]
-				if err := tree.processBatch(batch, conn, counter); err != nil {
-					errorChan <- err
-					return
-				}
-			}
-		}(i, connPool[i])
-	}
-
-	wg.Wait()
-	close(errorChan)
-
-	// Check for errors
-	for err := range errorChan {
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// processBatch handles a single batch of loading tasks
-func (tree *Tree) processBatch(batch []nodeLoadTask, conn *SqliteReadConn, counter *AtomicNodeCounter) error {
-	// Group by node type for better query optimization
-	leafTasks := make([]nodeLoadTask, 0, len(batch))
-	branchTasks := make([]nodeLoadTask, 0, len(batch))
-
-	for _, task := range batch {
-		if isLeafSeq(task.nodeKey.Sequence()) {
-			leafTasks = append(leafTasks, task)
-		} else {
-			branchTasks = append(branchTasks, task)
-		}
-	}
-
-	// Process leaf nodes
-	if len(leafTasks) > 0 {
-		if err := tree.batchLoadNodes(leafTasks, conn, true); err != nil {
-			return err
-		}
-	}
-
-	// Process branch nodes
-	if len(branchTasks) > 0 {
-		if err := tree.batchLoadNodes(branchTasks, conn, false); err != nil {
-			return err
-		}
-	}
-
-	// Update progress counter
-	counter.completed += int64(len(batch))
-
-	return nil
-}
-
-// batchLoadNodes performs the actual batched database queries
-func (tree *Tree) batchLoadNodes(tasks []nodeLoadTask, conn *SqliteReadConn, isLeaf bool) error {
-	const maxBatchSize = 100 // SQLite parameter limit consideration
-
-	for i := 0; i < len(tasks); i += maxBatchSize {
-		end := min(i+maxBatchSize, len(tasks))
-		batch := tasks[i:end]
-
-		if err := tree.executeBatchQuery(batch, conn, isLeaf); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// executeBatchQuery runs optimized batch queries
-func (tree *Tree) executeBatchQuery(tasks []nodeLoadTask, conn *SqliteReadConn, isLeaf bool) error {
-	// For now, fall back to individual queries but with better batching
-	// In a full implementation, we'd use prepared statements with batch parameters
-	for _, task := range tasks {
-		var node *Node
-		var err error
-
-		if isLeaf {
-			node, err = conn.getLeaf(tree.pool, task.nodeKey)
-		} else {
-			node, err = conn.getNode(tree.pool, task.nodeKey)
-		}
-
-		if err != nil {
-			return fmt.Errorf("error loading node %s: %w", task.nodeKey, err)
-		}
-
-		if node == nil {
-			return fmt.Errorf("node not found: %s", task.nodeKey)
-		}
-
-		// Update parent node with loaded child
-		if task.isLeft {
-			task.parentNode.leftNode = node
-		} else {
-			task.parentNode.rightNode = node
-		}
-	}
-
-	return nil
-}
-
-// Pipeline stage functions for pipeline processing
-type pipelineStage struct {
-	input  chan interface{}
-	output chan interface{}
-	worker func(interface{}) interface{}
-}
-
-func (ps *pipelineStage) run() {
-	defer close(ps.output)
-	for item := range ps.input {
-		if result := ps.worker(item); result != nil {
-			ps.output <- result
-		}
-	}
 }
