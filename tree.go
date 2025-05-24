@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/eatonphil/gosqlite"
+
 	"github.com/cosmos/iavl/v2/metrics"
 )
 
@@ -252,6 +254,56 @@ func (tree *Tree) computeHash() []byte {
 	tree.hashedVersion = currentVersion
 	tree.modificationCount = 0
 	return tree.root.Hash()
+}
+
+func (tree *Tree) newHashConnection() (*SqliteReadConn, error) {
+	conn, err := gosqlite.Open(tree.sql.opts.treeConnectionString(ReadOnly), openReadOnlyMode)
+	if err != nil {
+		return nil, err
+	}
+
+	err = conn.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS changelog;", tree.sql.opts.leafConnectionString(ReadOnly)))
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	err = conn.Exec("PRAGMA automatic_index=OFF;")
+	if err != nil {
+		return nil, err
+	}
+
+	err = conn.Exec(fmt.Sprintf("PRAGMA mmap_size=%d;", 0))
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	err = conn.Exec(fmt.Sprintf("PRAGMA cache_size=%d;", 100))
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	err = conn.Exec("PRAGMA read_uncommitted=OFF;")
+	if err != nil {
+		return nil, err
+	}
+
+	err = conn.Exec("PRAGMA query_only=ON;")
+	if err != nil {
+		return nil, err
+	}
+
+	return &SqliteReadConn{
+		conn:         conn,
+		treeVersion:  tree.version.Load(),
+		shards:       &VersionRange{},
+		shardQueries: make(map[int64]*gosqlite.Stmt),
+		opts:         &tree.sql.opts,
+		inUse:        false,
+		logger:       tree.sql.logger,
+	}, nil
 }
 
 func (tree *Tree) deepHashParallel(node *Node, depth int8) {
