@@ -200,9 +200,9 @@ func (tree *Tree) optimizedWorkerCount(workload int) int {
 	} else if workload <= 100 {
 		return min(4, cpuCount)
 	} else if workload <= 1000 {
-		return min(6, cpuCount)
+		return min(8, cpuCount)
 	}
-	return min(8, cpuCount*2) // For large workloads
+	return min(16, cpuCount*2) // For large workloads
 }
 
 func NewTree(sql *SqliteDb, pool *NodePool, opts TreeOptions) *Tree {
