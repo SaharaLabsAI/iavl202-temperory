@@ -447,6 +447,19 @@ func (node *Node) _hash() []byte {
 	return node.hash
 }
 
+func (node *Node) _hashWith(h hash.Hash, buf *bytes.Buffer) []byte {
+	node.checkValid()
+	if node.hash != nil {
+		return node.hash
+	}
+
+	node.writeHashToBuffer(buf)
+	h.Write(buf.Bytes())
+	node.hash = h.Sum(nil)
+
+	return node.hash
+}
+
 func (node *Node) writeHashToBuffer(buf *bytes.Buffer) {
 	var tmp [binary.MaxVarintLen64]byte
 	n := binary.PutVarint(tmp[:], int64(node.subtreeHeight))

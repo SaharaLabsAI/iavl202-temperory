@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"hash"
 	"runtime"
 	"sort"
 	"sync"
@@ -573,16 +574,33 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 				leafWg.Add(1)
 				go func() {
 					defer leafWg.Done()
+
+					h := hashPool.Get().(hash.Hash)
+					defer hashPool.Put(h)
+
+					buf := bufPool.Get().(*bytes.Buffer)
+					defer bufPool.Put(buf)
+
 					for leaf := range leafChan {
-						leaf._hash()
+						h.Reset()
+						buf.Reset()
+						leaf._hashWith(h, buf)
 					}
 				}()
 			}
 			leafWg.Wait()
 		} else {
 			// Sequential for very small workloads
+			h := hashPool.Get().(hash.Hash)
+			defer hashPool.Put(h)
+
+			buf := bufPool.Get().(*bytes.Buffer)
+			defer bufPool.Put(buf)
+
 			for _, leaf := range allLeaves {
-				leaf._hash()
+				h.Reset()
+				buf.Reset()
+				leaf._hashWith(h, buf)
 			}
 		}
 	}
@@ -627,31 +645,54 @@ func (tree *Tree) deepHashParallel(node *Node, depth int8) {
 					branchWg.Add(1)
 					go func() {
 						defer branchWg.Done()
+
+						h := hashPool.Get().(hash.Hash)
+						defer hashPool.Put(h)
+
+						buf := bufPool.Get().(*bytes.Buffer)
+						defer bufPool.Put(buf)
+
 						for branch := range branchChan {
-							// Clear hash and ensure children are hashed
-							branch.SetHash(nil)
 							if branch.leftNode != nil && branch.leftNode.hash == nil {
-								branch.leftNode._hash()
+								h.Reset()
+								buf.Reset()
+								branch.leftNode._hashWith(h, buf)
 							}
 							if branch.rightNode != nil && branch.rightNode.hash == nil {
-								branch.rightNode._hash()
+								h.Reset()
+								buf.Reset()
+								branch.rightNode._hashWith(h, buf)
 							}
-							branch._hash()
+
+							h.Reset()
+							buf.Reset()
+							branch._hashWith(h, buf)
 						}
 					}()
 				}
 				branchWg.Wait()
 			} else {
-				// Sequential for single nodes
+				h := hashPool.Get().(hash.Hash)
+				defer hashPool.Put(h)
+
+				buf := bufPool.Get().(*bytes.Buffer)
+				defer bufPool.Put(buf)
+
 				for _, branch := range branches {
-					branch.SetHash(nil)
 					if branch.leftNode != nil && branch.leftNode.hash == nil {
-						branch.leftNode._hash()
+						h.Reset()
+						buf.Reset()
+						branch.leftNode._hashWith(h, buf)
 					}
 					if branch.rightNode != nil && branch.rightNode.hash == nil {
-						branch.rightNode._hash()
+						h.Reset()
+						buf.Reset()
+						branch.rightNode._hashWith(h, buf)
 					}
-					branch._hash()
+
+					h.Reset()
+					buf.Reset()
+					branch._hashWith(h, buf)
 				}
 			}
 		}
