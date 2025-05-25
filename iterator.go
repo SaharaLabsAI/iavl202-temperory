@@ -266,7 +266,7 @@ func newIterTree(tree *Tree) *Tree {
 		copy(key, tree.root.key)
 
 		value := make([]byte, len(tree.root.value))
-		copy(key, tree.root.value)
+		copy(value, tree.root.value)
 
 		root := &Node{
 			subtreeHeight: tree.root.SubTreeHeight(),
