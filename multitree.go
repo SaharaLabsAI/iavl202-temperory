@@ -329,6 +329,7 @@ func (mt *MultiTree) TestBuild(opts *testutil.TreeBuildOptions) (int64, error) {
 	if opts.SampleRate != 0 {
 		sampleRate = opts.SampleRate
 	}
+	rateCount := sampleRate
 
 	since := time.Now()
 	itrStart := time.Now()
@@ -392,39 +393,70 @@ func (mt *MultiTree) TestBuild(opts *testutil.TreeBuildOptions) (int64, error) {
 		if err != nil {
 			return cnt, err
 		}
+		changesetByStore := make(map[string][]BatchOperation)
 		changeset := itr.Nodes()
 		for ; changeset.Valid(); err = changeset.Next() {
-			cnt++
 			if err != nil {
 				return cnt, err
 			}
 			node := changeset.GetNode()
 			key := node.Key
 
-			tree, ok := mt.Trees[node.StoreKey]
-			if !ok {
-				if err := mt.MountTree(node.StoreKey); err != nil {
-					return cnt, err
-				}
-				tree = mt.Trees[node.StoreKey]
-			}
-
+			var op BatchOperation
 			if !node.Delete {
-				_, err = tree.set(key, node.Value)
-				if err != nil {
-					return cnt, err
-				}
+				op = NewSetOperation(key, node.Value)
 			} else {
-				_, _, err := tree.Remove(key)
-				if err != nil {
-					return cnt, err
-				}
+				op = NewRemoveOperation(key)
 			}
 
-			if cnt%sampleRate == 0 {
+			changesetByStore[node.StoreKey] = append(changesetByStore[node.StoreKey], op)
+
+			// tree, ok := mt.Trees[node.StoreKey]
+			// if !ok {
+			// 	if err := mt.MountTree(node.StoreKey); err != nil {
+			// 		return cnt, err
+			// 	}
+			// 	tree = mt.Trees[node.StoreKey]
+			// }
+
+			// if !node.Delete {
+			// 	_, err = tree.set(key, node.Value)
+			// 	if err != nil {
+			// 		return cnt, err
+			// 	}
+			// } else {
+			// 	_, _, err := tree.Remove(key)
+			// 	if err != nil {
+			// 		return cnt, err
+			// 	}
+			// }
+
+			// if cnt%sampleRate == 0 {
+			// 	if err := report(); err != nil {
+			// 		return cnt, err
+			// 	}
+			// }
+		}
+
+		for storeKey, ops := range changesetByStore {
+			cnt = cnt + int64(len(ops))
+			tree, ok := mt.Trees[storeKey]
+			if !ok {
+				if err := mt.MountTree(storeKey); err != nil {
+					return cnt, err
+				}
+				tree = mt.Trees[storeKey]
+			}
+
+			if err := tree.BatchSetRemove(ops); err != nil {
+				return cnt, err
+			}
+
+			if cnt > rateCount {
 				if err := report(); err != nil {
 					return cnt, err
 				}
+				rateCount = rateCount + sampleRate
 			}
 		}
 
