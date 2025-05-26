@@ -41,8 +41,8 @@ const (
 )
 
 var (
-	DisableS2Compression   = "0"
-	isDisableS2Compression = false
+	DisableS2Compression   = "1"
+	isDisableS2Compression = true
 )
 
 func init() {
