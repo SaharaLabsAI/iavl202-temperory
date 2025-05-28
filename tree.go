@@ -1830,28 +1830,6 @@ func (tree *Tree) getRecentRoot(version int64) (bool, *Node) {
 	return true, &root
 }
 
-func (tree *Tree) IterateRecent(version int64, start, end []byte, ascending bool) (bool, Iterator) {
-	tree.rw.RLock()
-	defer tree.rw.RUnlock()
-
-	got, root := tree.getRecentRoot(version)
-	if !got {
-		return false, nil
-	}
-	itr := &TreeIterator{
-		tree:      tree,
-		start:     start,
-		end:       end,
-		ascending: ascending,
-		inclusive: false,
-		stack:     []*Node{root},
-		valid:     true,
-		metrics:   tree.metricsProxy,
-	}
-	itr.Next()
-	return true, itr
-}
-
 func (tree *Tree) Import(version int64) (*Importer, error) {
 	return newImporter(tree, version)
 }
