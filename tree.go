@@ -1933,6 +1933,10 @@ func (tree *Tree) GetImmutableProvable(version int64) (*Tree, error) {
 	return imTree, nil
 }
 
+func (tree *Tree) IsImmutable() bool {
+	return tree.immutable
+}
+
 func (tree *Tree) DiscardImmutableTree() error {
 	tree.sql.leafWrite = nil
 	tree.sql.treeWrite = nil
