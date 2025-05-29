@@ -64,9 +64,6 @@ type TreeIterator struct {
 	err        error  // current error
 	valid      bool   // iteration status
 
-	processedChildren map[string]int // nodeKey -> processed children
-	nodeStackIndex    map[string]int // nodeKey -> stack index
-
 	metrics metrics.Proxy
 }
 
@@ -112,11 +109,6 @@ func (i *TreeIterator) stepAscend() {
 			if !i.started && bytes.Compare(node.Key(), i.start) < 0 {
 				// Skip this leaf and remove from stack
 				i.removeNodeFromStack()
-				i.markNodeProcessed(node.nodeKey.String())
-				if parent := i.findParentNodeInStack(node); parent != nil {
-					i.markChildProcessed(parent.nodeKey.String())
-					i.tryCleanupNode(parent)
-				}
 				continue
 			}
 			if i.isPastEndAscend(node.Key()) {
@@ -129,11 +121,6 @@ func (i *TreeIterator) stepAscend() {
 			i.value = node.Value()
 
 			i.removeNodeFromStack()
-			i.markNodeProcessed(node.nodeKey.String())
-			if parent := i.findParentNodeInStack(node); parent != nil {
-				i.markChildProcessed(parent.nodeKey.String())
-				i.tryCleanupNode(parent)
-			}
 			return
 		}
 
@@ -177,11 +164,6 @@ func (i *TreeIterator) stepAscend() {
 
 		case 2: // Done with this internal node
 			i.removeNodeFromStack()
-			i.markNodeProcessed(node.nodeKey.String())
-			if parent := i.findParentNodeInStack(node); parent != nil {
-				i.markChildProcessed(parent.nodeKey.String())
-				i.tryCleanupNode(parent)
-			}
 		}
 	}
 
@@ -200,22 +182,12 @@ func (i *TreeIterator) stepDescend() {
 				if i.inclusive && res < 0 {
 					// Skip this leaf and remove from stack
 					i.removeNodeFromStack()
-					i.markNodeProcessed(node.nodeKey.String())
-					if parent := i.findParentNodeInStack(node); parent != nil {
-						i.markChildProcessed(parent.nodeKey.String())
-						i.tryCleanupNode(parent)
-					}
 					continue
 				}
 				// if end is not inclusive (default) and the key is greater than or equal to end, skip
 				if res <= 0 {
 					// Skip this leaf and remove from stack
 					i.removeNodeFromStack()
-					i.markNodeProcessed(node.nodeKey.String())
-					if parent := i.findParentNodeInStack(node); parent != nil {
-						i.markChildProcessed(parent.nodeKey.String())
-						i.tryCleanupNode(parent)
-					}
 					continue
 				}
 			}
@@ -229,11 +201,6 @@ func (i *TreeIterator) stepDescend() {
 			i.value = node.Value()
 
 			i.removeNodeFromStack()
-			i.markNodeProcessed(node.nodeKey.String())
-			if parent := i.findParentNodeInStack(node); parent != nil {
-				i.markChildProcessed(parent.nodeKey.String())
-				i.tryCleanupNode(parent)
-			}
 			return
 		}
 
@@ -278,11 +245,6 @@ func (i *TreeIterator) stepDescend() {
 		case 2: // Done with this internal node
 			// Remove from stack, mark as processed and notify parent
 			i.removeNodeFromStack()
-			i.markNodeProcessed(node.nodeKey.String())
-			if parent := i.findParentNodeInStack(node); parent != nil {
-				i.markChildProcessed(parent.nodeKey.String())
-				i.tryCleanupNode(parent)
-			}
 		}
 	}
 
@@ -324,96 +286,13 @@ func (i *TreeIterator) Error() error {
 
 func (i *TreeIterator) Close() error {
 	i.stack = nil
-	i.processedChildren = nil
-	i.nodeStackIndex = nil
 	i.valid = false
 	i.tree.sql.pool = nil
 	return i.err
 }
 
-// markNodeProcessed marks that a node has been completely processed
-// This should only be called when:
-// 1. The node is a leaf (no children to process), OR
-// 2. The node is internal and both its children have been processed
-func (i *TreeIterator) markNodeProcessed(nodeKey string) {
-	if i.processedChildren == nil {
-		i.processedChildren = make(map[string]int)
-	}
-	i.processedChildren[nodeKey] = -1 // Use -1 to indicate this node itself is processed
-}
-
-// markChildProcessed marks that a child of the given parent node has been completely processed
-func (i *TreeIterator) markChildProcessed(parentNodeKey string) {
-	if i.processedChildren == nil {
-		i.processedChildren = make(map[string]int)
-	}
-	i.processedChildren[parentNodeKey]++
-}
-
-// tryCleanupNode attempts to clear child references if both children have been processed
-// and the node is no longer in the stack (completely done)
-func (i *TreeIterator) tryCleanupNode(node *Node) {
-	if node == nil || node.isLeaf() {
-		return
-	}
-
-	nodeKeyStr := node.nodeKey.String()
-
-	// Count how many children this node has
-	childCount := 0
-	if !node.leftNodeKey.IsEmpty() {
-		childCount++
-	}
-	if !node.rightNodeKey.IsEmpty() {
-		childCount++
-	}
-
-	// Only clear references if:
-	// 1. We've processed all children
-	// 2. This node is not currently in the stack (to avoid breaking iteration)
-	if i.processedChildren != nil && i.processedChildren[nodeKeyStr] >= childCount && childCount > 0 {
-		// Use fast stack lookup
-		if !i.isNodeInStack(node) {
-			node.leftNode = nil
-			node.rightNode = nil
-			// Mark this node as processed since both children are done
-			i.markNodeProcessed(nodeKeyStr)
-
-			// Clean up memory by removing entries from tracking maps
-			delete(i.processedChildren, nodeKeyStr)
-		}
-	}
-}
-
-// findParentNodeInStack finds the parent node of the given child node in the stack
-func (i *TreeIterator) findParentNodeInStack(childNode *Node) *Node {
-	if childNode == nil {
-		return nil
-	}
-
-	// Look through the stack to find a parent that could have this node as a child
-	for j := len(i.stack) - 1; j >= 0; j-- {
-		candidate := i.stack[j].node
-		if candidate.isLeaf() {
-			continue
-		}
-
-		// Check if this candidate could be the parent
-		if (candidate.leftNode == childNode) || (candidate.rightNode == childNode) {
-			return candidate
-		}
-	}
-	return nil
-}
-
 func (i *TreeIterator) addNodeToStack(node *Node, state int) {
-	if i.nodeStackIndex == nil {
-		i.nodeStackIndex = make(map[string]int)
-	}
-
-	stackIndex := len(i.stack)
 	i.stack = append(i.stack, iteratorStackEntry{node: node, state: state})
-	i.nodeStackIndex[node.nodeKey.String()] = stackIndex
 }
 
 func (i *TreeIterator) removeNodeFromStack() *Node {
@@ -426,30 +305,7 @@ func (i *TreeIterator) removeNodeFromStack() *Node {
 
 	i.stack = i.stack[:len(i.stack)-1]
 
-	if i.nodeStackIndex != nil {
-		delete(i.nodeStackIndex, node.nodeKey.String())
-	}
-
 	return node
-}
-
-func (i *TreeIterator) isNodeInStack(node *Node) bool {
-	if i.nodeStackIndex == nil || node == nil {
-		return false
-	}
-
-	nodeKeyStr := node.nodeKey.String()
-	stackIndex, exists := i.nodeStackIndex[nodeKeyStr]
-
-	if exists && stackIndex >= 0 && stackIndex < len(i.stack) {
-		return i.stack[stackIndex].node == node
-	}
-
-	if exists {
-		delete(i.nodeStackIndex, nodeKeyStr)
-	}
-
-	return false
 }
 
 func (i *TreeIterator) initializeIteratorStack(root *Node) {
@@ -524,16 +380,14 @@ func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err
 	itTree := newIterTree(tree)
 
 	itr = &TreeIterator{
-		tree:              itTree,
-		start:             start,
-		end:               end,
-		ascending:         true,
-		inclusive:         inclusive,
-		valid:             itTree.root != nil,
-		stack:             nil, // Will be initialized properly below
-		processedChildren: make(map[string]int),
-		nodeStackIndex:    make(map[string]int),
-		metrics:           tree.metricsProxy,
+		tree:      itTree,
+		start:     start,
+		end:       end,
+		ascending: true,
+		inclusive: inclusive,
+		valid:     itTree.root != nil,
+		stack:     nil, // Will be initialized properly below
+		metrics:   tree.metricsProxy,
 	}
 
 	// Properly initialize the stack and index map
@@ -561,16 +415,14 @@ func (tree *Tree) ReverseIterator(start, end []byte) (itr Iterator, err error) {
 	itTree := newIterTree(tree)
 
 	itr = &TreeIterator{
-		tree:              itTree,
-		start:             start,
-		end:               end,
-		ascending:         false,
-		inclusive:         false,
-		valid:             itTree.root != nil,
-		stack:             nil, // Will be initialized properly below
-		processedChildren: make(map[string]int),
-		nodeStackIndex:    make(map[string]int),
-		metrics:           tree.metricsProxy,
+		tree:      itTree,
+		start:     start,
+		end:       end,
+		ascending: false,
+		inclusive: false,
+		valid:     itTree.root != nil,
+		stack:     nil, // Will be initialized properly below
+		metrics:   tree.metricsProxy,
 	}
 
 	// Properly initialize the stack and index map
@@ -599,16 +451,14 @@ func (tree *Tree) IterateRecent(version int64, start, end []byte, ascending bool
 	itTree := newIterTree(tree)
 
 	itr := &TreeIterator{
-		tree:              itTree,
-		start:             start,
-		end:               end,
-		ascending:         ascending,
-		inclusive:         false,
-		valid:             true,
-		stack:             nil, // Will be initialized properly below
-		processedChildren: make(map[string]int),
-		nodeStackIndex:    make(map[string]int),
-		metrics:           tree.metricsProxy,
+		tree:      itTree,
+		start:     start,
+		end:       end,
+		ascending: ascending,
+		inclusive: false,
+		valid:     true,
+		stack:     nil, // Will be initialized properly below
+		metrics:   tree.metricsProxy,
 	}
 
 	// Properly initialize the stack and index map
