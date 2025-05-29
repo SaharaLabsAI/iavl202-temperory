@@ -108,7 +108,10 @@ func (i *TreeIterator) stepAscend() {
 		if node.isLeaf() {
 			if !i.started && bytes.Compare(node.Key(), i.start) < 0 {
 				// Skip this leaf and remove from stack
-				i.removeNodeFromStack()
+				removedNode := i.removeNodeFromStack()
+				if removedNode != nil && i.tree != nil && i.tree.pool != nil && removedNode.poolID == i.tree.pool.poolID.Load() {
+					i.tree.pool.Put(removedNode)
+				}
 				continue
 			}
 			if i.isPastEndAscend(node.Key()) {
@@ -120,7 +123,10 @@ func (i *TreeIterator) stepAscend() {
 			i.key = node.Key()
 			i.value = node.Value()
 
-			i.removeNodeFromStack()
+			removedNode := i.removeNodeFromStack()
+			if removedNode != nil && i.tree != nil && i.tree.pool != nil && removedNode.poolID == i.tree.pool.poolID.Load() {
+				i.tree.pool.Put(removedNode)
+			}
 			return
 		}
 
@@ -139,7 +145,14 @@ func (i *TreeIterator) stepAscend() {
 					return
 				}
 				if left != nil {
-					i.addNodeToStack(left, 0)
+					// Make a copy of the node if it's from a different pool
+					leftToAdd := left
+					if left.poolID != i.tree.pool.poolID.Load() {
+						leftCopy := i.tree.pool.Get()
+						*leftCopy = *left // Shallow copy
+						leftToAdd = leftCopy
+					}
+					i.addNodeToStack(leftToAdd, 0)
 					// Continue to process the left child
 					continue
 				}
@@ -156,14 +169,24 @@ func (i *TreeIterator) stepAscend() {
 				return
 			}
 			if right != nil {
-				i.addNodeToStack(right, 0)
+				// Make a copy of the node if it's from a different pool
+				rightToAdd := right
+				if right.poolID != i.tree.pool.poolID.Load() {
+					rightCopy := i.tree.pool.Get()
+					*rightCopy = *right // Shallow copy
+					rightToAdd = rightCopy
+				}
+				i.addNodeToStack(rightToAdd, 0)
 				// Continue to process the right child
 				continue
 			}
 			// No right child to process, continue to state 2 in next iteration
 
 		case 2: // Done with this internal node
-			i.removeNodeFromStack()
+			removedNode := i.removeNodeFromStack()
+			if removedNode != nil && i.tree != nil && i.tree.pool != nil && removedNode.poolID == i.tree.pool.poolID.Load() {
+				i.tree.pool.Put(removedNode)
+			}
 		}
 	}
 
@@ -181,13 +204,20 @@ func (i *TreeIterator) stepDescend() {
 				// if end is inclusive and the key is greater than end, skip
 				if i.inclusive && res < 0 {
 					// Skip this leaf and remove from stack
-					i.removeNodeFromStack()
+					removedNode := i.removeNodeFromStack()
+					// Return leaf node to pool if it belongs to iterator pool
+					if removedNode != nil && i.tree != nil && i.tree.pool != nil && removedNode.poolID == i.tree.pool.poolID.Load() {
+						i.tree.pool.Put(removedNode)
+					}
 					continue
 				}
 				// if end is not inclusive (default) and the key is greater than or equal to end, skip
 				if res <= 0 {
 					// Skip this leaf and remove from stack
-					i.removeNodeFromStack()
+					removedNode := i.removeNodeFromStack()
+					if removedNode != nil && i.tree != nil && i.tree.pool != nil && removedNode.poolID == i.tree.pool.poolID.Load() {
+						i.tree.pool.Put(removedNode)
+					}
 					continue
 				}
 			}
@@ -200,7 +230,10 @@ func (i *TreeIterator) stepDescend() {
 			i.key = node.Key()
 			i.value = node.Value()
 
-			i.removeNodeFromStack()
+			removedNode := i.removeNodeFromStack()
+			if removedNode != nil && i.tree != nil && i.tree.pool != nil && removedNode.poolID == i.tree.pool.poolID.Load() {
+				i.tree.pool.Put(removedNode)
+			}
 			return
 		}
 
@@ -219,7 +252,14 @@ func (i *TreeIterator) stepDescend() {
 					return
 				}
 				if right != nil {
-					i.addNodeToStack(right, 0)
+					// Make a copy of the node if it's from a different pool
+					rightToAdd := right
+					if right.poolID != i.tree.pool.poolID.Load() {
+						rightCopy := i.tree.pool.Get()
+						*rightCopy = *right // Shallow copy
+						rightToAdd = rightCopy
+					}
+					i.addNodeToStack(rightToAdd, 0)
 					// Continue to process the right child
 					continue
 				}
@@ -236,15 +276,24 @@ func (i *TreeIterator) stepDescend() {
 				return
 			}
 			if left != nil {
-				i.addNodeToStack(left, 0)
+				// Make a copy of the node if it's from a different pool
+				leftToAdd := left
+				if left.poolID != i.tree.pool.poolID.Load() {
+					leftCopy := i.tree.pool.Get()
+					*leftCopy = *left // Shallow copy
+					leftToAdd = leftCopy
+				}
+				i.addNodeToStack(leftToAdd, 0)
 				// Continue to process the left child
 				continue
 			}
 			// No left child to process, continue to state 2 in next iteration
 
 		case 2: // Done with this internal node
-			// Remove from stack, mark as processed and notify parent
-			i.removeNodeFromStack()
+			removedNode := i.removeNodeFromStack()
+			if removedNode != nil && i.tree != nil && i.tree.pool != nil && removedNode.poolID == i.tree.pool.poolID.Load() {
+				i.tree.pool.Put(removedNode)
+			}
 		}
 	}
 
@@ -285,9 +334,24 @@ func (i *TreeIterator) Error() error {
 }
 
 func (i *TreeIterator) Close() error {
+	if i.tree != nil && i.tree.pool != nil {
+		for len(i.stack) > 0 {
+			entry := i.stack[len(i.stack)-1]
+			node := entry.node
+			i.stack = i.stack[:len(i.stack)-1]
+			if node != nil && node.poolID == i.tree.pool.poolID.Load() {
+				i.tree.pool.Put(node)
+			}
+		}
+	}
+
 	i.stack = nil
 	i.valid = false
-	i.tree.sql.pool = nil
+
+	i.tree.root = nil
+	i.tree.pool = nil
+	i.tree.sql = nil
+
 	return i.err
 }
 
@@ -310,7 +374,14 @@ func (i *TreeIterator) removeNodeFromStack() *Node {
 
 func (i *TreeIterator) initializeIteratorStack(root *Node) {
 	if root != nil {
-		i.addNodeToStack(root, 0)
+		// Make a copy of the root if it's from a different pool
+		rootToAdd := root
+		if root.poolID != i.tree.pool.poolID.Load() {
+			rootCopy := i.tree.pool.Get()
+			*rootCopy = *root // Shallow copy
+			rootToAdd = rootCopy
+		}
+		i.addNodeToStack(rootToAdd, 0)
 	}
 }
 
@@ -390,7 +461,6 @@ func (tree *Tree) Iterator(start, end []byte, inclusive bool) (itr Iterator, err
 		metrics:   tree.metricsProxy,
 	}
 
-	// Properly initialize the stack and index map
 	treeItr := itr.(*TreeIterator)
 	treeItr.initializeIteratorStack(itTree.root)
 
@@ -425,7 +495,6 @@ func (tree *Tree) ReverseIterator(start, end []byte) (itr Iterator, err error) {
 		metrics:   tree.metricsProxy,
 	}
 
-	// Properly initialize the stack and index map
 	treeItr := itr.(*TreeIterator)
 	treeItr.initializeIteratorStack(itTree.root)
 
@@ -461,7 +530,6 @@ func (tree *Tree) IterateRecent(version int64, start, end []byte, ascending bool
 		metrics:   tree.metricsProxy,
 	}
 
-	// Properly initialize the stack and index map
 	itr.initializeIteratorStack(itTree.root)
 
 	if tree.metricsProxy != nil {
