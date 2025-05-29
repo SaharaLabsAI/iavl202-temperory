@@ -70,17 +70,17 @@ type Node struct {
 
 	dirty  bool
 	evict  bool
-	poolId uint64
+	poolID uint64
 	source NodeSource
 }
 
 func (node *Node) String() string {
 	return fmt.Sprintf("Node{hash: %x, nodeKey: %s, leftNodeKey: %v, rightNodeKey: %v, size: %d, subtreeHeight: %d, poolId: %d}",
-		node.hash, node.nodeKey, node.leftNodeKey, node.rightNodeKey, node.size, node.subtreeHeight, node.poolId)
+		node.hash, node.nodeKey, node.leftNodeKey, node.rightNodeKey, node.size, node.subtreeHeight, node.poolID)
 }
 
 func (node *Node) checkValid() {
-	if node.source == PoolNode && node.poolId == 0 {
+	if node.source == PoolNode && node.poolID == 0 {
 		panic(fmt.Sprintf("attempt to use node (key: %s, nk: %s) after it was returned to pool or not properly initialized", node.key, node.nodeKey))
 	}
 }

@@ -7,13 +7,12 @@ import (
 	"sync/atomic"
 )
 
+var GlobalPoolId atomic.Uint64
+
 type NodePool struct {
 	syncPool *sync.Pool
 
-	free  chan int
-	nodes []Node
-
-	poolId atomic.Uint64
+	poolID atomic.Uint64
 }
 
 func NewNodePool() *NodePool {
@@ -23,26 +22,33 @@ func NewNodePool() *NodePool {
 				return &Node{}
 			},
 		},
-		free: make(chan int, 1000),
 	}
+
+	if GlobalPoolId.Load() == math.MaxUint64 {
+		np.poolID.Store(1)
+		GlobalPoolId.Store(1)
+	} else {
+		GlobalPoolId.Add(1)
+		np.poolID.Store(GlobalPoolId.Load())
+	}
+
 	return np
 }
 
 func (np *NodePool) Get() *Node {
-	if np.poolId.Load() == math.MaxUint64 {
-		np.poolId.Store(1)
-	} else {
-		np.poolId.Add(1)
-	}
 	n := np.syncPool.Get().(*Node)
-	n.poolId = np.poolId.Load()
+	n.poolID = np.poolID.Load()
 	n.source = PoolNode
+
 	return n
 }
 
 func (np *NodePool) Put(node *Node) {
-	if node.poolId == 0 {
+	if node.poolID == 0 {
 		panic(fmt.Sprintf("NodePool.Put: detected attempt to Put node with poolId 0 (key: %s). Possible double Put or invalid node.", node.key))
+	}
+	if node.poolID != np.poolID.Load() {
+		panic(fmt.Sprintf("NodePool.Put: attempt to Put node to wrong pool, node %d pool %d", node.poolID, np.poolID.Load()))
 	}
 
 	node.leftNodeKey = emptyNodeKey
@@ -59,6 +65,6 @@ func (np *NodePool) Put(node *Node) {
 	node.evict = false
 	node.source = PoolNode
 
-	node.poolId = 0
+	node.poolID = 0
 	np.syncPool.Put(node)
 }
