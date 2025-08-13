@@ -12,8 +12,8 @@ import (
 
 	"github.com/dustin/go-humanize"
 
-	"github.com/cosmos/iavl/v2/metrics"
-	"github.com/cosmos/iavl/v2/testutil"
+	"github.com/sahara/iavl/v2/metrics"
+	"github.com/sahara/iavl/v2/testutil"
 )
 
 // MultiTree encapsulates multiple IAVL trees, each with its own "store key" in the context of the Cosmos SDK.
@@ -52,6 +52,7 @@ func ImportMultiTree(logger Logger, version int64, path string, treeOpts TreeOpt
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println("王文琪 | iavl2-ImportMultiTree | paths: ", paths)
 	var (
 		cnt  = 0
 		done = make(chan struct {
@@ -65,11 +66,14 @@ func ImportMultiTree(logger Logger, version int64, path string, treeOpts TreeOpt
 		go func(p string) {
 			tree, err := mt.newTree(p)
 			if err != nil {
+				fmt.Println("王文琪 | iavl2-ImportMultiTree err 1")
 				errs <- err
 			}
 			importErr := tree.LoadSnapshot(version, PreOrder)
 
 			if importErr != nil {
+				fmt.Println("王文琪 | iavl2-ImportMultiTree err 2")
+
 				errs <- fmt.Errorf("err while importing %s; %w", p, importErr)
 				return
 			}
