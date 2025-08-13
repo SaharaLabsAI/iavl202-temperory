@@ -11,7 +11,7 @@ import (
 
 	ics23 "github.com/cosmos/ics23/go"
 
-	encoding "github.com/sahara/iavl/v2/internal"
+	encoding "github.com/sahara/iavl/internal"
 )
 
 var proofBufPool = &sync.Pool{

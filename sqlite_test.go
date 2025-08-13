@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 
-	"github.com/sahara/iavl/v2/testutil"
+	"github.com/sahara/iavl/testutil"
 )
 
 func TestBuildSqlite(t *testing.T) {

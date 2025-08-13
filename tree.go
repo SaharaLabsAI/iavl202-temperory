@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sahara/iavl/v2/metrics"
+	"github.com/sahara/iavl/metrics"
 )
 
 const (

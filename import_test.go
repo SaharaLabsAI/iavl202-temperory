@@ -8,7 +8,7 @@ import (
 	"github.com/cosmos/iavl-bench/bench"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sahara/iavl/v2/testutil"
+	"github.com/sahara/iavl/testutil"
 )
 
 func Test_ExportImport(t *testing.T) {

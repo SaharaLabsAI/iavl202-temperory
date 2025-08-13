@@ -12,8 +12,8 @@ import (
 
 	"github.com/dustin/go-humanize"
 
-	"github.com/sahara/iavl/v2/metrics"
-	"github.com/sahara/iavl/v2/testutil"
+	"github.com/sahara/iavl/metrics"
+	"github.com/sahara/iavl/testutil"
 )
 
 // MultiTree encapsulates multiple IAVL trees, each with its own "store key" in the context of the Cosmos SDK.

@@ -1,4 +1,4 @@
-module github.com/sahara/iavl/v2
+module github.com/sahara/iavl
 
 go 1.23.0
 

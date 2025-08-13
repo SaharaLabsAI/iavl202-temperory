@@ -9,7 +9,7 @@ import (
 
 	"github.com/eatonphil/gosqlite"
 
-	"github.com/sahara/iavl/v2/metrics"
+	"github.com/sahara/iavl/metrics"
 )
 
 type SqliteReadonlyConnPool struct {

@@ -14,7 +14,7 @@ import (
 	api "github.com/kocubinski/costor-api"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/sahara/iavl/v2/metrics"
+	"github.com/sahara/iavl/metrics"
 )
 
 const defaultSQLitePath = "/tmp/iavl2"

@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/sahara/iavl/v2"
+	"github.com/sahara/iavl"
 )
 
 func Test_Iterator(t *testing.T) {

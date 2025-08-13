@@ -14,7 +14,7 @@ import (
 
 	"github.com/klauspost/compress/s2"
 
-	encoding "github.com/sahara/iavl/v2/internal"
+	encoding "github.com/sahara/iavl/internal"
 )
 
 const hashSize = 32
