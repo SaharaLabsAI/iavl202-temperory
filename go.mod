@@ -5,11 +5,10 @@ go 1.23.0
 require (
 	github.com/aybabtme/uniplot v0.0.0-20151203143629-039c559e5e7e
 	github.com/cosmos/iavl-bench/bench v0.0.4
-	github.com/cosmos/iavl/v2 v2.0.0-alpha.5
 	github.com/cosmos/ics23/go v0.11.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/eatonphil/gosqlite v0.10.1-0.20250409163211-9c47979bc5b1
-	github.com/emicklei/dot v1.8.0
+	github.com/emicklei/dot v1.9.0
 	github.com/klauspost/compress v1.18.0
 	github.com/kocubinski/costor-api v1.1.2
 	github.com/stretchr/testify v1.10.0
@@ -20,7 +19,6 @@ require (
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/bvinc/go-sqlite-lite v0.6.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cosmos/gogoproto v1.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
