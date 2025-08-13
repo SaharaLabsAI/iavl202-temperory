@@ -10,7 +10,7 @@ import (
 
 	"github.com/klauspost/compress/s2"
 
-	"github.com/cosmos/iavl/v2/metrics"
+	"github.com/sahara/iavl/v2/metrics"
 )
 
 type sqliteBatch struct {

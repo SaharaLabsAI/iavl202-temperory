@@ -14,7 +14,7 @@ import (
 	api "github.com/kocubinski/costor-api"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/cosmos/iavl/v2/metrics"
+	"github.com/sahara/iavl/v2/metrics"
 )
 
 const defaultSQLitePath = "/tmp/iavl2"
@@ -1281,6 +1281,10 @@ func (sql *SqliteDb) HasRoot(version int64) (bool, error) {
 	}
 
 	return true, nil
+}
+
+func (sql *SqliteDb) LatestVersion() (int64, error) {
+	return sql.latestRoot()
 }
 
 func (sql *SqliteDb) latestRoot() (version int64, err error) {

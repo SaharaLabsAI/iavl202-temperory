@@ -14,8 +14,8 @@ import (
 	api "github.com/kocubinski/costor-api"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cosmos/iavl/v2/metrics"
-	"github.com/cosmos/iavl/v2/testutil"
+	"github.com/sahara/iavl/v2/metrics"
+	"github.com/sahara/iavl/v2/testutil"
 )
 
 func TestTree_Hash(t *testing.T) {
